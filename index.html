@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>电商 AI 视觉工坊 & 全渠道上架中台</title>
+    <meta name="description" content="AI-powered product hero image & long detail page generator with platform-specific adaptations, batch processing, and multi-channel publishing." />
+    <script>
+      (function() {
+        try {
+          var origFetch = window.fetch;
+          var currentFetch = typeof origFetch === 'function' ? origFetch.bind(window) : origFetch;
+          Object.defineProperty(window, 'fetch', {
+            get: function() {
+              return currentFetch;
+            },
+            set: function(val) {
+              currentFetch = val;
+            },
+            configurable: true,
+            enumerable: true
+          });
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

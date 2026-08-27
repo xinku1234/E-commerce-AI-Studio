@@ -1,0 +1,6 @@
+{
+  "name": "E-commerce AI Studio & Multi-Channel Publisher",
+  "description": "AI-powered product hero image & long detail page generator with platform-specific adaptations, batch processing, and multi-channel publishing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
