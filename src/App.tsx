@@ -35,9 +35,8 @@ export default function App() {
   const [hasLoadedStoredProduct, setHasLoadedStoredProduct] = useState(false);
   const [modelRequired, setModelRequired] = useState(true);
   const [serverModelReady, setServerModelReady] = useState(false);
-  // Start optimistically while the health probe is pending; a required-model
-  // server will switch this to locked as soon as its response arrives.
-  const [modelReady, setModelReady] = useState(true);
+  // Keep the workspace locked until the server confirms a usable model.
+  const [modelReady, setModelReady] = useState(false);
   const [healthResolved, setHealthResolved] = useState(false);
   const [modelConfigRequest, setModelConfigRequest] = useState(0);
 

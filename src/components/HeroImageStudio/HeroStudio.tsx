@@ -1304,7 +1304,8 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
           imageBase64: optimizedImage,
           analysisModel: effectiveModelName,
           customEndpointUrl: selectedPromptModel === 'custom-prompt-model' ? customPromptConfig.endpointUrl : undefined,
-          customApiKey: selectedPromptModel === 'custom-prompt-model' ? customPromptConfig.apiKey : undefined
+          customApiKey: selectedPromptModel === 'custom-prompt-model' ? customPromptConfig.apiKey : undefined,
+          customModelVerified: selectedPromptModel === 'custom-prompt-model' && customPromptConfig.testStatus === 'success'
         })
       }, 25000);
 
@@ -1406,6 +1407,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
           imageModel: effectiveImageModelName,
           customEndpointUrl: selectedImageModel === 'custom-image-engine' ? customImageConfig.endpointUrl : undefined,
           customApiKey: selectedImageModel === 'custom-image-engine' ? customImageConfig.apiKey : undefined,
+          customModelVerified: selectedImageModel === 'custom-image-engine' && customImageConfig.testStatus === 'success',
           denoisingStrength
       };
       let generation = await requestProductImageWithRetry(generationPayload, 25000);
@@ -1649,6 +1651,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
               imageModel: effectiveImageModelName,
               customEndpointUrl: selectedImageModel === 'custom-image-engine' ? customImageConfig.endpointUrl : undefined,
               customApiKey: selectedImageModel === 'custom-image-engine' ? customImageConfig.apiKey : undefined,
+              customModelVerified: selectedImageModel === 'custom-image-engine' && customImageConfig.testStatus === 'success',
               denoisingStrength
           }, 18000);
 

@@ -22,9 +22,10 @@ app.use(requestContext);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
-function requireConfiguredModel(customEndpointUrl?: unknown) {
+function requireConfiguredModel(customEndpointUrl?: unknown, customModelVerified?: unknown) {
   const ai = getAiCapabilities();
-  if (!ai.modelRequired || ai.providers.gemini.configured || (typeof customEndpointUrl === 'string' && customEndpointUrl.trim())) return null;
+  const customReady = typeof customEndpointUrl === 'string' && customEndpointUrl.trim() && customModelVerified === true;
+  if (!ai.modelRequired || ai.providers.gemini.configured || customReady) return null;
   return { success: false, error: "未绑定可用模型，请先配置 GEMINI_API_KEY 或测试通过自定义模型端点。", code: "MODEL_REQUIRED" };
 }
 
@@ -916,7 +917,7 @@ ${hasImages ? `【核心指令：已输入 ${resolvedImageParts.length} 张商�
 // 3. AI Detail Page Modules Generator
 app.post("/api/generate-detail-page-modules", async (req, res) => {
   const { productName, category, targetPlatform, sellingPoints, customSpecs } = req.body || {};
-  const modelError = requireConfiguredModel(req.body?.customEndpointUrl);
+  const modelError = requireConfiguredModel(req.body?.customEndpointUrl, req.body?.customModelVerified);
   if (modelError) return res.status(503).json(modelError);
   const fallbackModules = buildFallbackDetailModules({ productName, category, sellingPoints, customSpecs });
   try {
@@ -974,9 +975,10 @@ app.post("/api/generate-product-image", async (req, res) => {
       imageModel = "gemini-3.1-flash-image",
       customEndpointUrl,
       customApiKey,
+      customModelVerified,
       denoisingStrength = 0.65
     } = req.body;
-    const modelError = requireConfiguredModel(customEndpointUrl);
+    const modelError = requireConfiguredModel(customEndpointUrl, customModelVerified);
     if (modelError) return res.status(503).json(modelError);
 
     const resolvedImageParts = await resolveImageParts(images, imageBase64);
