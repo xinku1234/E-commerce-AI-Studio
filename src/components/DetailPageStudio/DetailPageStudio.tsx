@@ -39,6 +39,7 @@ export const DetailPageStudio: React.FC<DetailPageStudioProps> = ({
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [pageTheme, setPageTheme] = useState<'luxury-dark' | 'clean-light' | 'tech-mesh' | 'warm-lifestyle'>('luxury-dark');
   const [longImagePreviewUrl, setLongImagePreviewUrl] = useState<string | null>(null);
+  const [generationNotice, setGenerationNotice] = useState<{ type: 'ai' | 'fallback' | 'error'; text: string } | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -48,6 +49,7 @@ export const DetailPageStudio: React.FC<DetailPageStudioProps> = ({
   // AI Generation of entire detail page
   const handleAiRegenerateDetailPage = async () => {
     setIsGeneratingAi(true);
+    setGenerationNotice(null);
     try {
       const res = await safeFetchJson('/api/generate-detail-page-modules', {
         method: 'POST',
@@ -68,10 +70,19 @@ export const DetailPageStudio: React.FC<DetailPageStudioProps> = ({
           enabled: true
         })));
         setActiveModuleId(data.modules[0].id || 'mod_hero');
+        setGenerationNotice({
+          type: data.generationMode === 'ai' ? 'ai' : 'fallback',
+          text: data.generationMode === 'ai'
+            ? '详情页已由 AI 生成，请在发布前核对参数、认证和服务承诺。'
+            : (data.warning || '已使用安全规则模板生成。')
+        });
         fireSuccessConfetti();
+      } else {
+        setGenerationNotice({ type: 'error', text: res.error || '详情页生成失败，请确认服务端状态。' });
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to generate detail page:', e);
+      setGenerationNotice({ type: 'error', text: e?.message || '详情页生成失败。' });
     } finally {
       setIsGeneratingAi(false);
     }
@@ -212,7 +223,7 @@ export const DetailPageStudio: React.FC<DetailPageStudioProps> = ({
             className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-purple-600/20 disabled:opacity-50"
           >
             <Sparkles className="w-3.5 h-3.5" />
-            {isGeneratingAi ? 'Gemini 正在策划长图...' : 'AI 一键生成完整详情页'}
+            {isGeneratingAi ? '正在生成详情页...' : 'AI 一键生成完整详情页'}
           </button>
 
           {/* View Mode Toggle */}
@@ -274,6 +285,18 @@ export const DetailPageStudio: React.FC<DetailPageStudioProps> = ({
           </button>
         </div>
       </div>
+
+      {generationNotice && (
+        <div className={`px-4 py-3 border rounded-lg text-xs ${
+          generationNotice.type === 'ai'
+            ? 'bg-emerald-950/30 border-emerald-800 text-emerald-200'
+            : generationNotice.type === 'fallback'
+              ? 'bg-amber-950/30 border-amber-800 text-amber-200'
+              : 'bg-rose-950/30 border-rose-800 text-rose-200'
+        }`}>
+          {generationNotice.text}
+        </div>
+      )}
 
       {/* Main Grid: Left Modules List, Center Preview, Right Module Editor */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -438,7 +461,7 @@ export const DetailPageStudio: React.FC<DetailPageStudioProps> = ({
                           />
                         </div>
                         <div className="text-[11px] text-amber-300 font-medium bg-amber-500/10 p-2 rounded-lg border border-amber-500/20">
-                          ✦ {m.content.highlight || '精工品质保障 · 官方正品首发'}
+                          ✦ {m.content.highlight || '商品亮点待商家核对后填写'}
                         </div>
                       </div>
                     )}

@@ -2,105 +2,36 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
-import { GoogleGenAI, Type } from "@google/genai";
+import { getAiCapabilities, getGeminiClient } from "./server/ai/gemini";
+import { resolveImageParts } from "./server/ai/imageInput";
+import { generateProductImage } from "./server/ai/imageProviders";
+import { buildFallbackDetailModules } from "./server/ai/detailFallback";
+import { apiNotFound, errorHandler, requestContext } from "./server/http";
+import { simulateChannelPublish } from "./server/publishSimulation";
+import { validateRequestUrl } from "./server/security";
 
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number.parseInt(process.env.PORT || "3000", 10);
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+  throw new Error(`PORT 必须是 1 到 65535 之间的整数，当前值为: ${process.env.PORT || ""}`);
+}
 
+app.use(requestContext);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
-// Helper to resolve any image input (data URL, HTTP URL, or raw base64) into Gemini inlineData format
-async function resolveImagePart(imageInput: string | undefined): Promise<{ mimeType: string; data: string } | null> {
-  if (!imageInput || typeof imageInput !== "string" || imageInput.trim().length < 10) {
-    return null;
-  }
-  const str = imageInput.trim();
-  
-  // 1. Data URL format: data:image/png;base64,...
-  if (str.startsWith("data:")) {
-    const commaIdx = str.indexOf(",");
-    if (commaIdx > 0) {
-      const header = str.substring(5, commaIdx);
-      const mimeType = header.split(";")[0] || "image/jpeg";
-      const base64Data = str.substring(commaIdx + 1);
-      return { mimeType, data: base64Data };
-    }
-  }
-
-  // 2. HTTP/HTTPS Remote URL
-  if (str.startsWith("http://") || str.startsWith("https://")) {
-    try {
-      const resp = await fetch(str, { 
-        headers: { "User-Agent": "Mozilla/5.0" },
-        signal: AbortSignal.timeout(8000) 
-      });
-      if (resp.ok) {
-        const contentType = resp.headers.get("content-type") || "image/jpeg";
-        const buffer = await resp.arrayBuffer();
-        const base64Data = Buffer.from(buffer).toString("base64");
-        return { mimeType: contentType.split(";")[0] || "image/jpeg", data: base64Data };
-      }
-    } catch (e) {
-      console.warn("Failed to fetch remote image URL for AI vision:", e);
-    }
-  }
-
-  // 3. Raw Base64 string without data: prefix
-  if (str.length > 50 && !str.includes(" ") && !str.includes("/")) {
-    return { mimeType: "image/jpeg", data: str };
-  }
-
-  return null;
-}
-
-// Helper to resolve multiple images into Gemini inlineData parts array
-async function resolveImageParts(images: (string | undefined)[] | undefined, singleImage?: string): Promise<{ mimeType: string; data: string }[]> {
-  const list: string[] = [];
-  if (Array.isArray(images)) {
-    for (const img of images) {
-      if (img && typeof img === "string" && img.trim().length > 10) {
-        list.push(img.trim());
-      }
-    }
-  }
-  if (list.length === 0 && singleImage && typeof singleImage === "string" && singleImage.trim().length > 10) {
-    list.push(singleImage.trim());
-  }
-
-  const results: { mimeType: string; data: string }[] = [];
-  // Limit to max 6 images to avoid payload overflow
-  for (const item of list.slice(0, 6)) {
-    const resolved = await resolveImagePart(item);
-    if (resolved) {
-      results.push(resolved);
-    }
-  }
-  return results;
-}
-
-// Helper to get Gemini client
-function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    console.warn("GEMINI_API_KEY is not set. Using intelligent fallback engines.");
-    return null;
-  }
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
-}
-
 // 1. Health check
 app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+  const ai = getAiCapabilities();
+  res.json({
+    status: "ok",
+    mode: ai.mode,
+    ai: ai.providers,
+    publishMode: "simulation",
+    timestamp: new Date().toISOString()
+  });
 });
 
 // 1.1 Test Custom AI Endpoint & Fetch Available Models
@@ -116,7 +47,12 @@ app.post("/api/test-custom-endpoint", async (req, res) => {
       });
     }
 
-    let cleanUrl = endpointUrl.trim().replace(/\/+$/, "");
+    let cleanUrl: string;
+    try {
+      cleanUrl = validateRequestUrl(endpointUrl, "接口地址");
+    } catch (error: any) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
     let modelsList: string[] = [];
     let detectedService = "OpenAI Compatible";
 
@@ -454,6 +390,43 @@ function buildRichProductAnalysis(productName = "智能高品质商品", categor
   };
 }
 
+function buildSafeProductGuidance(productName = "待命名商品", category = "待填写类目", targetPlatform = "淘宝/天猫", userNotes = "") {
+  const platform = targetPlatform || "淘宝/天猫";
+  const isVertical = /抖音|小红书|douyin|xiaohongshu/i.test(platform);
+  const isAmazon = /亚马逊|amazon/i.test(platform);
+  const notes = userNotes.trim();
+
+  return {
+    productIdentified: productName || "待命名商品",
+    categoryIdentified: category || "待填写类目",
+    materialsDetected: ["主要材质待商家按实物补充"],
+    lightingMood: "中性商业影棚柔光，准确呈现商品颜色与外观",
+    compositionTip: isAmazon
+      ? "主体居中并保留纯白背景；发布前按目标站点当前规则人工复核"
+      : `${isVertical ? "竖版" : "方形"}构图，主体清晰完整，并为已核实文案预留安全区域`,
+    visualPrompt: `Accurate commercial product photography of ${productName || "the supplied product"}, preserve the real product identity, shape, color and visible details, clean studio lighting, uncluttered background, no invented accessories, no text, no logos, no unsupported claims.`,
+    visualPromptCn: `基于实拍图准确展示${productName || "商品"}，保持真实外观、颜色、结构和可见细节；使用干净商业布光，不添加未经提供的配件、文字、标志或宣传结论。`,
+    negativePrompt: "distorted product, altered logo, invented accessories, unreadable text, unsupported certification marks, exaggerated claims, blurry, low resolution",
+    coreSellingPoints: [
+      "主要材质、配方或结构特点（待商家核对）",
+      "核心功能与适用场景（待商家核对）",
+      "尺寸、容量、功率或兼容范围（待商家补充）",
+      "发货、退换与质保政策（仅填写店铺真实承诺）"
+    ],
+    heroTitles: [productName || "商品名称待补充", "核心卖点待核实后填写", "规格与服务信息待商家补充"],
+    badges: ["信息待核对"],
+    painPoints: ["目标用户与购买顾虑待结合真实评价和客服记录补充"],
+    platformOptimizations: {
+      platform,
+      aspectRatio: isVertical ? "3:4" : "1:1",
+      colorScheme: isAmazon ? "纯白背景建议，具体以目标站点当前规则为准" : "根据商品实物配色选择对比清晰的中性背景",
+      visualTip: "先保证商品真实可辨，再添加已经核实的价格、规格和活动信息",
+      complianceNote: "仅为制作建议，不代表平台审核通过；发布前需人工核对素材、文案和目标平台规则"
+    },
+    targetAudience: notes ? `需结合商家补充信息确认：${notes}` : "目标人群待商家根据真实客户与销售数据补充"
+  };
+}
+
 // 2. AI Product Vision Analysis & Platform-Tailored Prompting (Multi-Image Vision Enabled)
 app.post("/api/ai-analyze-product", async (req, res) => {
   const { 
@@ -468,7 +441,7 @@ app.post("/api/ai-analyze-product", async (req, res) => {
     customApiKey
   } = req.body;
 
-  const fallbackData = buildRichProductAnalysis(
+  const fallbackData = buildSafeProductGuidance(
     productName || "智能高品质商品", 
     category || "3C数码 / 生活美学", 
     targetPlatform || "淘宝/天猫", 
@@ -483,7 +456,7 @@ app.post("/api/ai-analyze-product", async (req, res) => {
     // Check if user is using a custom endpoint with OpenAI-compatible API
     if (customEndpointUrl && (analysisModel.includes("custom") || customApiKey || customEndpointUrl.includes("http"))) {
       try {
-        let cleanUrl = customEndpointUrl.trim().replace(/\/+$/, "");
+        let cleanUrl = validateRequestUrl(customEndpointUrl, "自定义接口地址");
         let chatUrl = cleanUrl.endsWith("/chat/completions") ? cleanUrl : `${cleanUrl}/chat/completions`;
         if (!chatUrl.includes("/v1") && !chatUrl.includes("/chat")) {
           chatUrl = `${cleanUrl}/v1/chat/completions`;
@@ -524,6 +497,7 @@ app.post("/api/ai-analyze-product", async (req, res) => {
             const parsed = JSON.parse(content);
             return res.json({
               success: true,
+              generationMode: "ai",
               modelUsed: analysisModel,
               data: { ...fallbackData, ...parsed }
             });
@@ -549,6 +523,8 @@ app.post("/api/ai-analyze-product", async (req, res) => {
     if (!ai) {
       return res.json({
         success: true,
+        generationMode: "fallback",
+        warning: "未配置 Gemini，当前结果为规则建议，不代表已识别图片中的真实参数或认证。",
         modelUsed: "intelligent-ecom-engine",
         data: fallbackData
       });
@@ -628,6 +604,7 @@ ${hasImages ? `【极其重要：用户已上传 ${resolvedImageParts.length} �
         const parsed = JSON.parse(responseText);
         return res.json({
           success: true,
+          generationMode: "ai",
           modelUsed: targetModel,
           data: {
             ...fallbackData,
@@ -641,6 +618,8 @@ ${hasImages ? `【极其重要：用户已上传 ${resolvedImageParts.length} �
 
     return res.json({
       success: true,
+      generationMode: "fallback",
+      warning: "模型响应无法解析，已返回规则建议，请人工核对。",
       modelUsed: targetModel,
       data: fallbackData
     });
@@ -648,6 +627,8 @@ ${hasImages ? `【极其重要：用户已上传 ${resolvedImageParts.length} �
     console.error("AI vision analysis error:", error);
     return res.json({
       success: true,
+      generationMode: "fallback",
+      warning: "AI 分析失败，已返回规则建议，请勿将其视为真实检测结果。",
       modelUsed: "intelligent-ecom-engine",
       data: fallbackData
     });
@@ -704,7 +685,7 @@ app.post("/api/generate-multimodal-platform-prompt", async (req, res) => {
     // Check if custom OpenAI-compatible endpoint is configured
     if (customEndpointUrl && (promptModel.includes("custom") || customApiKey || customEndpointUrl.includes("http"))) {
       try {
-        let cleanUrl = customEndpointUrl.trim().replace(/\/+$/, "");
+        let cleanUrl = validateRequestUrl(customEndpointUrl, "自定义接口地址");
         let chatUrl = cleanUrl.endsWith("/chat/completions") ? cleanUrl : `${cleanUrl}/chat/completions`;
         if (!chatUrl.includes("/v1") && !chatUrl.includes("/chat")) {
           chatUrl = `${cleanUrl}/v1/chat/completions`;
@@ -926,104 +907,17 @@ ${hasImages ? `【核心指令：已输入 ${resolvedImageParts.length} 张商�
 
 // 3. AI Detail Page Modules Generator
 app.post("/api/generate-detail-page-modules", async (req, res) => {
+  const { productName, category, targetPlatform, sellingPoints, customSpecs } = req.body || {};
+  const fallbackModules = buildFallbackDetailModules({ productName, category, sellingPoints, customSpecs });
   try {
-    const { productName, category, targetPlatform, sellingPoints, customSpecs } = req.body;
     const ai = getGeminiClient();
 
     if (!ai) {
       return res.json({
         success: true,
-        modules: [
-          {
-            id: "hero_banner",
-            type: "hero",
-            title: productName || "极简质感 · 旗舰新品",
-            subtitle: "重塑日常感知，探索质感美学新边界",
-            tag: "2026年度旗舰首发",
-            accentColor: "#E02424",
-            bgStyle: "luxury-dark",
-            content: {
-              highlight: "德国红点设计团队倾力巨献",
-              bulletPoints: ["顶级航空精工", "严苛质检工序", "全链路专属质保"]
-            }
-          },
-          {
-            id: "pain_points",
-            type: "comparison",
-            title: "传统痛点 vs 旗舰革新",
-            subtitle: "为什么超98%的用户换新都选择我们？",
-            accentColor: "#2563EB",
-            bgStyle: "clean-light",
-            content: {
-              traditional: ["普通塑料材质易发黄脆化", "续航虚标，外出频繁充电告急", "操作繁琐，老人小孩难上手"],
-              ours: ["航天级阳极氧化铝，历久弥新", "高能量密度电池，7天超长待机", "一键智能互联，全家即刻上手"]
-            }
-          },
-          {
-            id: "tech_breakdown",
-            type: "features",
-            title: "4重黑科技 澎湃实力",
-            subtitle: "每一处细节，皆是科技与工艺的融合",
-            accentColor: "#059669",
-            bgStyle: "tech-mesh",
-            content: {
-              featuresList: [
-                { name: "自研超导芯架构", desc: "运算响应速度提升300%，功耗直降40%" },
-                { name: "双轴微悬浮抗震", desc: "毫秒级动态平衡，极端环境下稳定如初" },
-                { name: "纳米级疏水疏油层", desc: "指纹水渍一抹即净，长久保持镜面级通透" },
-                { name: "智能AI温控算法", desc: "每秒百次实时调控，安全温润不烫手" }
-              ]
-            }
-          },
-          {
-            id: "scenarios",
-            type: "scenarios",
-            title: "多场景全天候 自由随行",
-            subtitle: "无缝融入高品质生活每一刻",
-            accentColor: "#D97706",
-            bgStyle: "warm-lifestyle",
-            content: {
-              scenes: [
-                { title: "商务通勤", desc: "极简内敛，出席重要会议彰显专业格调" },
-                { title: "户外探索", desc: "IP68级专业防尘防水，无惧风雨挑战" },
-                { title: "居家休闲", desc: "细腻柔和触感，点亮居室角落设计感" }
-              ]
-            }
-          },
-          {
-            id: "specs_table",
-            type: "specs",
-            title: "严谨规格参数",
-            subtitle: "真实数据见证硬核品质",
-            accentColor: "#4B5563",
-            bgStyle: "clean-light",
-            content: {
-              specsList: customSpecs && customSpecs.length > 0 ? customSpecs : [
-                { key: "产品型号", value: "PRO-2026-ULTRA" },
-                { key: "核心材质", value: "航空级合金 + 钢化玻璃" },
-                { key: "净重尺寸", value: "约 185g / 146 x 71 x 7.8 mm" },
-                { key: "执行标准", value: "GB 4943.1-2022 国际安全标准" },
-                { key: "包装清单", value: "主机*1、极速快充线*1、说明书与质保卡*1" }
-              ]
-            }
-          },
-          {
-            id: "trust_guarantee",
-            type: "guarantee",
-            title: "官方严选 售后无忧",
-            subtitle: "让您的每一次选择都倍感安心",
-            accentColor: "#DC2626",
-            bgStyle: "luxury-dark",
-            content: {
-              badges: [
-                { label: "7天无理由退换", sub: "退货免运费险" },
-                { label: "3年官方联保", sub: "全国联保网点" },
-                { label: "顺丰冷链速递", sub: "次日即达服务" },
-                { label: "100%正品验真", sub: "防伪溯源码保障" }
-              ]
-            }
-          }
-        ]
+        generationMode: "fallback",
+        warning: "未配置 Gemini，已使用只基于现有商品资料的安全模板；待补充字段需要人工完善。",
+        modules: fallbackModules
       });
     }
 
@@ -1043,10 +937,17 @@ app.post("/api/generate-detail-page-modules", async (req, res) => {
     });
 
     const parsed = JSON.parse(response.text?.trim() || "{}");
-    return res.json({ success: true, modules: parsed.modules || parsed });
+    const modules = Array.isArray(parsed) ? parsed : parsed.modules;
+    if (!Array.isArray(modules) || modules.length === 0) throw new Error("模型未返回有效详情页模块");
+    return res.json({ success: true, generationMode: "ai", modules });
   } catch (error: any) {
     console.error("Error generating detail page:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to generate detail page" });
+    return res.json({
+      success: true,
+      generationMode: "fallback",
+      warning: `AI 生成失败，已使用安全规则模板：${error.message || "未知错误"}`,
+      modules: fallbackModules
+    });
   }
 });
 
@@ -1068,178 +969,27 @@ app.post("/api/generate-product-image", async (req, res) => {
 
     const resolvedImageParts = await resolveImageParts(images, imageBase64);
 
-    // 1. If custom third-party image endpoint is configured (e.g. SiliconFlow / OpenAI / SD / ComfyUI)
-    if (customEndpointUrl && typeof customEndpointUrl === "string" && customEndpointUrl.trim().length > 0) {
-      try {
-        let cleanUrl = customEndpointUrl.trim().replace(/\/+$/, "");
-        if (!cleanUrl.endsWith("/images/generations") && !cleanUrl.endsWith("/generate")) {
-          if (cleanUrl.endsWith("/v1")) {
-            cleanUrl = `${cleanUrl}/images/generations`;
-          } else {
-            cleanUrl = `${cleanUrl}/v1/images/generations`;
-          }
-        }
-
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
-        if (customApiKey && customApiKey.trim()) {
-          headers["Authorization"] = `Bearer ${customApiKey.trim()}`;
-        }
-
-        const customModelName = imageModel === "custom-image-engine" ? "black-forest-labs/FLUX.1-schnell" : imageModel;
-        const customRes = await fetch(cleanUrl, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            model: customModelName,
-            prompt: `High-end commercial product photography, ${prompt}. 8k, photorealistic, pristine studio lighting.`,
-            n: 1,
-            size: aspectRatio === "3:4" ? "768x1024" : "1024x1024",
-            response_format: "b64_json"
-          }),
-          signal: AbortSignal.timeout(15000)
-        });
-
-        if (customRes.ok) {
-          const customData = await customRes.json();
-          if (customData.data && customData.data[0]) {
-            const item = customData.data[0];
-            const imgUrl = item.b64_json ? `data:image/png;base64,${item.b64_json}` : item.url;
-            if (imgUrl) {
-              return res.json({
-                success: true,
-                modelUsed: customModelName,
-                imageUrl: imgUrl
-              });
-            }
-          }
-        }
-      } catch (customErr) {
-        console.warn("Custom image endpoint fallback:", customErr);
-      }
-    }
-    
-    const ai = getGeminiClient();
-
-    if (!ai) {
-      return res.json({
-        success: true,
-        imageUrl: null,
-        useProceduralStudio: true,
-        modelUsed: imageModel,
-        message: "Using high-definition commercial visual studio synthesis."
-      });
-    }
-
-    const validRatio = (["1:1", "3:4", "4:3", "9:16", "16:9"].includes(aspectRatio) ? aspectRatio : "1:1") as any;
-
-    const parts: any[] = [];
-    for (const p of resolvedImageParts) {
-      parts.push({
-        inlineData: {
-          mimeType: p.mimeType,
-          data: p.data
-        }
-      });
-    }
-
-    const referenceNotice = resolvedImageParts.length > 1 
-      ? `Carefully inspect and reference the ${resolvedImageParts.length} multi-angle reference photos provided (accurately preserving the product's 3D silhouette, genuine materials, button/port layouts, and color scheme).` 
-      : (resolvedImageParts.length === 1 ? 'Carefully reference the product appearance and material texture from the provided image.' : '');
-
-    const enhancedPrompt = `High-end commercial e-commerce advertising product photography. ${referenceNotice} Generate a brand-new, photorealistic advertising photograph showcasing this exact product staged in a newly created professional commercial environment according to this creative direction: ${prompt}. Pristine studio lighting, clean podium, soft natural ray-traced contact shadows, 8k crisp details, professional advertising grade finish. ${negativePrompt ? `Exclude: ${negativePrompt}.` : ''}`;
-    parts.push({ text: enhancedPrompt });
-
-    let generatedImageUrl = "";
-    let actualModelUsed = "gemini-3.1-flash-image";
-
-    // 1. Try gemini-3.1-flash-image
-    try {
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-image",
-        contents: { parts },
-        config: {
-          imageConfig: {
-            aspectRatio: validRatio
-          }
-        }
-      });
-
-      if (response.candidates && response.candidates[0]?.content?.parts) {
-        for (const part of response.candidates[0].content.parts) {
-          if (part.inlineData?.data) {
-            const mime = part.inlineData.mimeType || "image/png";
-            generatedImageUrl = `data:${mime};base64,${part.inlineData.data}`;
-            actualModelUsed = "gemini-3.1-flash-image";
-            break;
-          }
-        }
-      }
-    } catch (flashErr: any) {
-      console.warn("gemini-3.1-flash-image fallback:", flashErr?.message);
-    }
-
-    // 2. Try gemini-3.1-flash-lite-image if first attempt produced no image
-    if (!generatedImageUrl) {
-      try {
-        const response = await ai.models.generateContent({
-          model: "gemini-3.1-flash-lite-image",
-          contents: { parts },
-          config: {
-            imageConfig: {
-              aspectRatio: validRatio
-            }
-          }
-        });
-
-        if (response.candidates && response.candidates[0]?.content?.parts) {
-          for (const part of response.candidates[0].content.parts) {
-            if (part.inlineData?.data) {
-              const mime = part.inlineData.mimeType || "image/png";
-              generatedImageUrl = `data:${mime};base64,${part.inlineData.data}`;
-              actualModelUsed = "gemini-3.1-flash-lite-image";
-              break;
-            }
-          }
-        }
-      } catch (liteErr: any) {
-        console.warn("gemini-3.1-flash-lite-image fallback:", liteErr?.message);
-      }
-    }
-
-    // 3. Try imagen-3.0-generate-002 if still no image (Vertex AI / Enterprise platform)
-    if (!generatedImageUrl) {
-      try {
-        const imagenResponse = await ai.models.generateImages({
-          model: "imagen-3.0-generate-002",
-          prompt: `Commercial e-commerce studio advertising photography, ${prompt}. Pristine lighting, clean podium, soft shadows, 8k crisp details.`,
-          config: {
-            numberOfImages: 1,
-            aspectRatio: validRatio,
-            outputMimeType: "image/png"
-          }
-        });
-        if (imagenResponse.generatedImages && imagenResponse.generatedImages[0]?.image?.imageBytes) {
-          generatedImageUrl = `data:image/png;base64,${imagenResponse.generatedImages[0].image.imageBytes}`;
-          actualModelUsed = "imagen-3.0-generate-002";
-        }
-      } catch (imgErr: any) {
-        // Clean fallback for environments without Imagen API access
-      }
-    }
-
-    return res.json({
-      success: true,
-      modelUsed: actualModelUsed,
-      imageUrl: generatedImageUrl || null,
-      useProceduralStudio: !generatedImageUrl,
-      isRealAiImage: Boolean(generatedImageUrl)
+    const result = await generateProductImage({
+      prompt: typeof prompt === 'string' && prompt.trim() ? prompt : 'clean commercial product photography',
+      negativePrompt,
+      aspectRatio,
+      stylePreset,
+      imageModel,
+      customEndpointUrl,
+      customApiKey,
+      referenceImages: resolvedImageParts
     });
+    return res.json({ success: true, ...result });
   } catch (error: any) {
     return res.json({
       success: true,
+      provider: "procedural",
+      modelUsed: "procedural-studio",
       imageUrl: null,
+      isRealAiImage: false,
       useProceduralStudio: true,
-      fallbackToPreset: true
+      fallbackToPreset: true,
+      fallbackReason: error?.message || "图片生成服务异常"
     });
   }
 });
@@ -1352,76 +1102,18 @@ app.post("/api/generate-hero-suite-5", async (req, res) => {
   }
 });
 
-// 5. Multi-Channel One-Click Publish & Compliance Verification Endpoint
+// 5. Simulated multi-channel publish and compliance preview endpoint.
+// This route never calls real marketplace APIs.
 app.post("/api/publish-channels", async (req, res) => {
   try {
-    const { productPayload, targetChannels, publishOptions } = req.body;
-    
-    // Simulate real-world channel API dispatches with validation & latency
-    const results = (targetChannels || ["taobao", "jd", "douyin", "1688"]).map((channelKey: string) => {
-      const channelNames: Record<string, string> = {
-        taobao: "淘宝 / 天猫旗舰店",
-        jd: "京东开放平台 (JD.com)",
-        pinduoduo: "拼多多商家后台",
-        "1688": "1688 阿里巴巴工贸批发店",
-        douyin: "抖音电商 (抖店 / 巨量百应)",
-        xiaohongshu: "小红书专业号电商",
-        amazon: "Amazon Seller Central (US/EU)",
-        shopify: "Shopify Global Storefront"
-      };
-
-      // Compliance verification per channel
-      const complianceChecks = [];
-      let isCompliant = true;
-
-      if (channelKey === "1688") {
-        complianceChecks.push({ rule: "源头实力工厂/B2B 认证标校验", status: "passed", note: "符合1688超级买家大市场规范" });
-        complianceChecks.push({ rule: "五张主图结构 (首图点击/细节/尺寸/场景/白底)", status: "passed", note: "五图结构完整无缺失" });
-        complianceChecks.push({ rule: "阶梯批发起订量及代发说明", status: "passed", note: "参数已写入商品属性" });
-      } else if (channelKey === "amazon") {
-        complianceChecks.push({ rule: "主图RGB(255,255,255)纯白底检测", status: "passed", note: "合规率 99.8%" });
-        complianceChecks.push({ rule: "产品主体占比≥85%", status: "passed", note: "通过" });
-        complianceChecks.push({ rule: "禁止违规侵权文字与图形", status: "passed", note: "无违规" });
-      } else if (channelKey === "taobao" || channelKey === "jd") {
-        complianceChecks.push({ rule: "首图尺寸 (800x800 / 1200x1200)", status: "passed", note: "符合标准规范" });
-        complianceChecks.push({ rule: "第五张白底图规范", status: "passed", note: "已自动生成无Logo白底备用图" });
-        complianceChecks.push({ rule: "广告极限词敏感词检测 (国家广告法)", status: "passed", note: "已过滤'全网第一/顶级'等违禁词" });
-      } else if (channelKey === "douyin" || channelKey === "xiaohongshu") {
-        complianceChecks.push({ rule: "3:4 / 9:16 竖屏种草流适配", status: "passed", note: "已匹配短视频与信息流推荐比例" });
-        complianceChecks.push({ rule: "视觉安全边距保护 (避免被头像/点赞栏遮挡)", status: "passed", note: "核心文案已居中排布" });
-      } else {
-        complianceChecks.push({ rule: "通用电商图片规格与格式压缩", status: "passed", note: "WebP / JPEG 优化就绪" });
-      }
-
-      return {
-        channelId: channelKey,
-        channelName: channelNames[channelKey] || channelKey,
-        status: "published", // "published" | "draft" | "queued"
-        publishedAt: new Date().toISOString(),
-        remoteItemId: `ITEM_${channelKey.toUpperCase()}_${Math.floor(10000000 + Math.random() * 90000000)}`,
-        complianceScore: 100,
-        complianceChecks,
-        publishUrl: `https://seller.${channelKey}.mock/products/edit?id=${Math.floor(100000 + Math.random() * 900000)}`,
-        assetsCount: {
-          heroImages: 5,
-          detailSlices: 6,
-          videoShort: 1
-        }
-      };
-    });
-
-    return res.json({
-      success: true,
-      batchId: `BATCH_${Date.now()}`,
-      dispatchedCount: results.length,
-      channelsResult: results,
-      message: "物料包已成功同步至目标渠道商家后台！"
-    });
+    return res.json(simulateChannelPublish(req.body || {}));
   } catch (error: any) {
-    console.error("Publish error:", error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(400).json({ success: false, error: error.message, requestId: res.locals.requestId });
   }
 });
+
+app.use('/api', apiNotFound);
+app.use(errorHandler);
 
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
@@ -1438,9 +1130,24 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`E-Commerce AI Studio Server running on http://0.0.0.0:${PORT}`);
   });
+
+  const shutdown = (signal: string) => {
+    console.log(`${signal} received, closing HTTP server...`);
+    server.close((error) => {
+      if (error) {
+        console.error('HTTP server shutdown failed:', error);
+        process.exitCode = 1;
+      }
+    });
+  };
+  process.once('SIGINT', () => shutdown('SIGINT'));
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
 }
 
-startServer();
+startServer().catch((error) => {
+  console.error('Server failed to start:', error);
+  process.exitCode = 1;
+});

@@ -178,6 +178,7 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
                 </span>
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
+                API Key 仅在当前页面会话中使用，不会保存到浏览器本地存储。
                 可分别指定用于「视觉理解/提示词生成」的 LLM 模型，以及用于「商业生图渲染」的图像引擎
               </p>
             </div>

@@ -25,7 +25,7 @@ interface ProductModalProps {
   onClose: () => void;
   currentProduct: ProductItem;
   onSelectProduct: (product: ProductItem) => void;
-  onSaveNewProduct: (product: ProductItem) => void;
+  onSaveNewProduct: (product: ProductItem) => void | Promise<void>;
 }
 
 export const ProductModal: React.FC<ProductModalProps> = ({
@@ -39,21 +39,27 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   
   // Custom product state
   const [customName, setCustomName] = useState('');
-  const [customCategory, setCustomCategory] = useState('美妆个护 / 彩妆');
-  const [customPrice, setCustomPrice] = useState('129');
-  const [customOriginalPrice, setCustomOriginalPrice] = useState('199');
-  const [customDiscountTag, setCustomDiscountTag] = useState('限时特惠');
+  const [customCategory, setCustomCategory] = useState('');
+  const [customPrice, setCustomPrice] = useState('');
+  const [customOriginalPrice, setCustomOriginalPrice] = useState('');
+  const [customDiscountTag, setCustomDiscountTag] = useState('');
   const [customImages, setCustomImages] = useState<string[]>([]);
   const [primaryImageIndex, setPrimaryImageIndex] = useState<number>(0);
   const [isDraggingOver, setIsDraggingOver] = useState<boolean>(false);
-  const [customSellingPoints, setCustomSellingPoints] = useState<string[]>([
-    '微米级细腻粉质，软糯贴肤不飞粉',
-    '自然元气微醺色，黄皮显白通透',
-    '12小时持久持妆锁色，抗油耐汗'
-  ]);
+  const [customSellingPoints, setCustomSellingPoints] = useState<string[]>([]);
   const [customPointInput, setCustomPointInput] = useState('');
   const [isExtractingAi, setIsExtractingAi] = useState(false);
   const [extractSuccessMsg, setExtractSuccessMsg] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const getSafeFallbackPoints = (name: string, category: string): string[] => [
+    `${name || '商品'}的主要材质、结构或配方特点（待商家按实物补充）`,
+    `${category || '当前类目'}下的核心使用场景（待商家核对）`,
+    '尺寸、容量、功率或适用范围等关键参数（待商家补充）',
+    '发货、退换与质保政策（仅填写店铺真实承诺）'
+  ];
 
   // Quick image downscaling helper for fast multimodal vision transmission
   const compressImageForVision = (imgSrc: string, maxDim = 640): Promise<string> => {
@@ -95,77 +101,6 @@ export const ProductModal: React.FC<ProductModalProps> = ({
     });
   };
 
-  // Quick fallback generator
-  const getHeuristicPoints = (name: string, cat: string): string[] => {
-    const n = (name || '').toLowerCase();
-    const c = (cat || '').toLowerCase();
-
-    // Blush and Color Cosmetics
-    if (
-      n.includes('腮红') || n.includes('blush') || n.includes('胭脂') ||
-      n.includes('口红') || n.includes('唇膏') || n.includes('唇釉') || n.includes('唇泥') ||
-      n.includes('眼影') || n.includes('高光') || n.includes('修容') || n.includes('粉饼') ||
-      n.includes('散粉') || n.includes('气垫') || n.includes('粉底') || n.includes('彩妆') ||
-      c.includes('彩妆')
-    ) {
-      const isBlush = n.includes('腮红') || n.includes('blush') || n.includes('胭脂') || !n;
-      return isBlush ? [
-        '微米级超细烘焙粉质，软糯贴肤不飞粉不显毛孔',
-        '特调自然元气微醺色，黄皮一抹显白自然通透',
-        '12小时持久锁色持妆，抗油耐汗全天不脱色',
-        '颊眼唇多用百搭，轻松晕染打造立体轮廓血色感'
-      ] : [
-        '精研微细显色微粒，一抹浓郁显色均匀不卡纹',
-        '添加养肤滋润植萃成分，上妆轻盈透气不拔干',
-        '全天候持久锁色配方，抗水防汗不易沾杯脱妆',
-        '专为亚洲肤色调配，显白提气色打造高级妆效'
-      ];
-    }
-
-    if (
-      n.includes('水') || n.includes('霜') || n.includes('精华') || n.includes('乳') ||
-      n.includes('面膜') || n.includes('护肤') || n.includes('美妆') || n.includes('防晒') ||
-      n.includes('洁面') || n.includes('洗面奶') || c.includes('美妆') || c.includes('护肤')
-    ) {
-      return [
-        '高浓度活性专研配方，深层渗透强韧修护肌底',
-        '7天实测淡纹紧致，提亮焕采温和不挑肤质',
-        '0添加酒精色素香精，敏感肌安心专研认证',
-        '清爽水感质地秒吸收，长效水润透气不闷痘'
-      ];
-    }
-    if (n.includes('耳') || n.includes('音') || n.includes('headphone') || n.includes('audio') || n.includes('充电') || c.includes('3c') || c.includes('数码')) {
-      return [
-        '45dB双馈深度主动降噪，静享纯净天籁空间',
-        'Hi-Res金标空间音频，360°全景环绕沉浸声场',
-        '60小时超长复合续航，闪充10分钟听歌5小时',
-        '零压感轻量悬浮耳罩，长时间佩戴舒适透气'
-      ];
-    }
-    if (n.includes('茶') || n.includes('咖啡') || n.includes('食') || n.includes('饮') || c.includes('食品') || c.includes('生鲜')) {
-      return [
-        '北纬黄金产区直采原叶/原豆，匠心控温烘焙锁鲜',
-        '0反式脂肪酸0蔗糖添加，健康轻负担纯正风味',
-        '充氮独立保鲜包装，随时随地还原现萃现泡口感',
-        'SGS国际权威检测合规，品质源头严苛品控'
-      ];
-    }
-    if (n.includes('衣') || n.includes('裤') || n.includes('鞋') || n.includes('服') || n.includes('裙') || n.includes('包') || c.includes('服装') || c.includes('鞋包')) {
-      return [
-        '100%精梳长绒棉重磅面料，亲肤透气不易变形',
-        '立体剪裁微宽松版型，包容各种身材百搭显瘦',
-        '高色牢度环保活性印染，耐磨水洗不易褪色',
-        '四针六线精工车缝，无感标签告别摩擦不适'
-      ];
-    }
-    return [
-      '微米级超细烘焙粉质，软糯贴肤不飞粉不显毛孔',
-      '特调自然元气微醺色，黄皮一抹显白自然通透',
-      '12小时持久锁色持妆，抗油耐汗全天不脱色',
-      '官方旗舰正品保障，支持全国联保售后无忧'
-    ];
-  };
-
   const handleAiSmartFill = async () => {
     const effectiveName = (customName && customName.trim() && customName !== '智能高品质商品') ? customName.trim() : '';
     setIsExtractingAi(true);
@@ -173,9 +108,9 @@ export const ProductModal: React.FC<ProductModalProps> = ({
 
     // Fallback timer in case network is slow
     const fallbackTimer = setTimeout(() => {
-      const fallbackList = getHeuristicPoints(effectiveName || '腮红', customCategory);
+      const fallbackList = getSafeFallbackPoints(effectiveName, customCategory);
       setCustomSellingPoints(fallbackList);
-      setExtractSuccessMsg(`✨ 已根据商品特征生成 ${fallbackList.length} 条高转化核心卖点！`);
+      setExtractSuccessMsg('AI 响应超时，已提供待核对的卖点填写框架。');
       setIsExtractingAi(false);
     }, 7000);
 
@@ -196,7 +131,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
 
       clearTimeout(fallbackTimer);
       const data = res.data;
-      if (data && data.success && data.data && data.data.coreSellingPoints?.length) {
+      if (data && data.success && data.generationMode === 'ai' && data.data && data.data.coreSellingPoints?.length) {
         setCustomSellingPoints(data.data.coreSellingPoints);
         const identifiedName = data.data.productIdentified;
         if (identifiedName && (!customName || customName === '智能高品质商品' || customName.trim() === '')) {
@@ -207,16 +142,16 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         }
         setExtractSuccessMsg(`✨ AI 视觉识别完成：【${identifiedName || customName || '商品'}】已提炼 ${data.data.coreSellingPoints.length} 条专属核心卖点！`);
       } else {
-        const fallbackList = getHeuristicPoints(effectiveName || '腮红', customCategory);
+        const fallbackList = getSafeFallbackPoints(effectiveName, customCategory);
         setCustomSellingPoints(fallbackList);
-        setExtractSuccessMsg(`✨ 已基于商品特征提炼 ${fallbackList.length} 条核心卖点！`);
+        setExtractSuccessMsg(data?.warning || '未获得真实 AI 识别结果，已提供待核对的卖点填写框架。');
       }
     } catch (e) {
       clearTimeout(fallbackTimer);
       console.warn('AI smart fill network fallback:', e);
-      const fallbackList = getHeuristicPoints(effectiveName || '腮红', customCategory);
+      const fallbackList = getSafeFallbackPoints(effectiveName, customCategory);
       setCustomSellingPoints(fallbackList);
-      setExtractSuccessMsg(`✨ 已基于商品特征提炼 ${fallbackList.length} 条核心卖点！`);
+      setExtractSuccessMsg('AI 请求失败，已提供待核对的卖点填写框架。');
     } finally {
       setIsExtractingAi(false);
       setTimeout(() => setExtractSuccessMsg(null), 5000);
@@ -224,9 +159,17 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   };
 
   const processFiles = (files: FileList | File[]) => {
-    const fileList: File[] = Array.from(files);
-    const fileArray = fileList.filter(f => f.type.startsWith('image/'));
-    if (fileArray.length === 0) return;
+    setUploadError(null);
+    const allowedTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
+    const remainingSlots = Math.max(0, 10 - customImages.length);
+    const fileList = Array.from(files);
+    const invalidType = fileList.find(file => !allowedTypes.has(file.type));
+    const tooLarge = fileList.find(file => file.size > 8 * 1024 * 1024);
+    if (invalidType) return setUploadError(`不支持 ${invalidType.name} 的文件格式，仅支持 PNG、JPG 和 WebP。`);
+    if (tooLarge) return setUploadError(`${tooLarge.name} 超过 8 MB，请压缩后上传。`);
+    if (remainingSlots === 0) return setUploadError('最多上传 10 张商品图片。');
+    const fileArray = fileList.slice(0, remainingSlots);
+    if (fileList.length > remainingSlots) setUploadError(`最多保留 10 张图片，本次仅添加前 ${remainingSlots} 张。`);
 
     const readPromises = fileArray.map(file => {
       return new Promise<string>((resolve) => {
@@ -296,31 +239,42 @@ export const ProductModal: React.FC<ProductModalProps> = ({
     setCustomSellingPoints(customSellingPoints.filter((_, i) => i !== index));
   };
 
-  const handleSaveCustom = () => {
-    const defaultPlaceholder = 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800&auto=format&fit=crop&q=80';
-    const mainImg = customImages[primaryImageIndex] || customImages[0] || defaultPlaceholder;
-    const allImgs = customImages.length > 0 ? customImages : [defaultPlaceholder];
+  const handleSaveCustom = async () => {
+    setFormError(null);
+    if (!customName.trim()) return setFormError('请填写商品名称。');
+    if (!customCategory.trim()) return setFormError('请填写商品类目。');
+    if (!customPrice.trim() || !Number.isFinite(Number(customPrice)) || Number(customPrice) < 0) return setFormError('请填写有效的活动售价。');
+    if (customImages.length === 0) return setFormError('请至少上传 1 张真实商品图片。');
+    const mainImg = customImages[primaryImageIndex] || customImages[0];
+    const allImgs = customImages;
 
     const newProd: ProductItem = {
       id: `custom_prod_${Date.now()}`,
-      name: customName || '自定义精品商品',
-      category: customCategory,
-      price: customPrice || '199',
-      originalPrice: customOriginalPrice || '399',
-      discountTag: customDiscountTag || '限时折扣',
+      name: customName.trim(),
+      category: customCategory.trim(),
+      price: customPrice.trim(),
+      originalPrice: customOriginalPrice.trim() || undefined,
+      discountTag: customDiscountTag.trim() || undefined,
       imageUrl: mainImg,
       images: allImgs,
       cutoutImageUrl: mainImg,
-      sellingPoints: customSellingPoints.length > 0 ? customSellingPoints : ['高品质工艺保障', '官方旗舰正品'],
+      sellingPoints: customSellingPoints.length > 0 ? customSellingPoints : ['核心卖点待商家补充'],
       heroTitles: [
-        `${customName || '质感新品'} · 官方首发`,
-        `颠覆体验 · 专为品质生活打造`
+        customName.trim(),
+        `${customName.trim()} 商品展示`
       ],
-      badges: ['官方正品', '顺丰包邮', '退货包运费', '热销爆款']
+      badges: []
     };
-    onSaveNewProduct(newProd);
-    onSelectProduct(newProd);
-    onClose();
+    setIsSaving(true);
+    try {
+      await onSaveNewProduct(newProd);
+      onClose();
+    } catch (error) {
+      console.error('Unable to save custom product:', error);
+      setFormError('商品保存失败，请检查浏览器存储权限后重试。');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   useEffect(() => {
@@ -499,9 +453,11 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                         <Upload className="w-6 h-6" />
                       </div>
                       <span className="text-xs font-bold text-slate-200">点击批量选择多张实拍图，或将多张图片拖拽到此处</span>
-                      <span className="text-[10px] text-slate-400 mt-1">支持同时上传 1~10 张图片 (PNG, JPG, WebP 格式，白底或实拍均可)</span>
+                      <span className="text-[10px] text-slate-400 mt-1">支持 1~10 张 PNG、JPG、WebP 图片，单张不超过 8 MB</span>
                       <input
                         type="file"
+                        data-testid="custom-product-images"
+                        aria-label="上传商品实拍图片"
                         accept="image/*"
                         multiple
                         onChange={handleImageUpload}
@@ -574,6 +530,8 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                           <span className="text-[9px] text-slate-500 mt-0.5">支持批量选图</span>
                           <input
                             type="file"
+                            data-testid="custom-product-images-more"
+                            aria-label="添加更多商品实拍图片"
                             accept="image/*"
                             multiple
                             onChange={handleImageUpload}
@@ -593,6 +551,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                     <label className="text-xs font-semibold text-slate-300 block mb-1">商品标题</label>
                     <input
                       type="text"
+                      aria-label="商品标题"
                       value={customName}
                       onChange={(e) => setCustomName(e.target.value)}
                       placeholder="例如：极简空间音频无线降噪耳机"
@@ -605,6 +564,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                       <label className="text-xs font-semibold text-slate-300 block mb-1">所属类目</label>
                       <input
                         type="text"
+                        aria-label="所属类目"
                         value={customCategory}
                         onChange={(e) => setCustomCategory(e.target.value)}
                         className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-rose-500"
@@ -614,6 +574,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                       <label className="text-xs font-semibold text-slate-300 block mb-1">优惠打标</label>
                       <input
                         type="text"
+                        aria-label="优惠打标"
                         value={customDiscountTag}
                         onChange={(e) => setCustomDiscountTag(e.target.value)}
                         placeholder="例如：买一赠一"
@@ -627,6 +588,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                       <label className="text-xs font-semibold text-slate-300 block mb-1">活动售价 (¥)</label>
                       <input
                         type="text"
+                        aria-label="活动售价"
                         value={customPrice}
                         onChange={(e) => setCustomPrice(e.target.value)}
                         className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-rose-500"
@@ -636,6 +598,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                       <label className="text-xs font-semibold text-slate-300 block mb-1">划线原价 (¥)</label>
                       <input
                         type="text"
+                        aria-label="划线原价"
                         value={customOriginalPrice}
                         onChange={(e) => setCustomOriginalPrice(e.target.value)}
                         className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-rose-500"
@@ -665,12 +628,13 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                     </button>
                   </div>
 
-                  {extractSuccessMsg && (
-                    <div className="p-2 rounded-lg bg-emerald-950/80 border border-emerald-600/60 text-emerald-300 text-[11px] flex items-center gap-1.5 animate-fadeIn">
+                   {extractSuccessMsg && (
+                     <div className="p-2 rounded-lg bg-amber-950/80 border border-amber-600/60 text-amber-200 text-[11px] flex items-center gap-1.5 animate-fadeIn">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
                       <span>{extractSuccessMsg}</span>
                     </div>
-                  )}
+                   )}
+                   {uploadError && <div className="p-2 rounded-lg bg-rose-950/80 border border-rose-600/60 text-rose-200 text-[11px]">{uploadError}</div>}
 
                   <div className="flex gap-2">
                     <input
@@ -695,29 +659,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                     <span className="text-[10px] text-slate-400 flex items-center gap-1">
                       <span>💡 灵感推荐:</span>
                     </span>
-                    {(() => {
-                      const n = customName.toLowerCase();
-                      const c = customCategory.toLowerCase();
-                      if (n.includes('腮红') || n.includes('胭脂') || n.includes('blush')) {
-                        return ['微米级细腻粉质', '自然元气血色感', '12H持妆不飞粉', '黄皮一抹显白', '软糯贴肤隐形毛孔', '颊眼唇多用'];
-                      }
-                      if (n.includes('口红') || n.includes('唇膏') || n.includes('唇釉') || n.includes('眼影') || n.includes('散粉') || n.includes('彩妆')) {
-                        return ['浓郁显色不卡纹', '养肤植萃配方', '全天候锁色持妆', '特调显白亚洲色', '轻盈丝绒哑光'];
-                      }
-                      if (n.includes('水') || n.includes('霜') || n.includes('精华') || n.includes('乳') || c.includes('美妆') || c.includes('护肤')) {
-                        return ['高活性专利配方', '7天淡纹紧致', '敏感肌专研认证', '深层修护肌底', '0添加温和无刺激', '清爽秒吸收'];
-                      }
-                      if (n.includes('耳') || n.includes('音') || n.includes('headphone') || n.includes('audio') || c.includes('数码') || c.includes('3c')) {
-                        return ['45dB双馈深度降噪', 'Hi-Res空间音频', '60h超长续航', '航空铝机身', '零压轻量佩戴', '双麦高清通话'];
-                      }
-                      if (n.includes('茶') || n.includes('咖啡') || n.includes('食') || n.includes('饮') || c.includes('食品')) {
-                        return ['北纬黄金产区直采', '0反式脂肪0蔗糖', '充氮锁鲜独立包装', 'SGS质检权威认证', '醇厚鲜活回甘'];
-                      }
-                      if (n.includes('衣') || n.includes('裤') || n.includes('鞋') || n.includes('服') || c.includes('服装') || c.includes('鞋包')) {
-                        return ['100%精梳长绒棉', '立体显瘦包容版型', '活性环保印染', '亲肤透气不易变形', '四针六线精工'];
-                      }
-                      return ['高品质精工质感', '官方正品保障', '人性化舒适体验', '高性价比爆款', '严苛品控认证'];
-                    })().map((chip, idx) => (
+                    {['主要材质（待核对）', '核心功能（待核对）', '适用场景（待核对）', '尺寸规格（待核对）', '包装清单（待核对）', '售后政策（待核对）'].map((chip, idx) => (
                       <button
                         key={idx}
                         type="button"
@@ -756,6 +698,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         </div>
 
         {/* Footer */}
+        {formError && <div className="px-6 py-2 text-xs text-rose-200 bg-rose-950/50 border-t border-rose-800">{formError}</div>}
         <div className="px-6 py-3.5 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between flex-shrink-0 z-10">
           <span className="text-xs text-slate-400">
             {customImages.length > 0 ? `已就绪 ${customImages.length} 张实拍图，主图工坊与详情页可自由切换使用。` : '选中商品后，主图工坊与详情页将实时同步物料。'}
@@ -772,10 +715,11 @@ export const ProductModal: React.FC<ProductModalProps> = ({
               <button
                 type="button"
                 onClick={handleSaveCustom}
+                disabled={isSaving}
                 className="px-5 py-2 rounded-lg bg-gradient-to-r from-rose-600 to-orange-500 hover:from-rose-500 hover:to-orange-400 active:scale-95 text-xs font-bold text-white shadow-lg shadow-rose-600/20 flex items-center gap-1.5 transition-all cursor-pointer ring-1 ring-white/10"
               >
                 <CheckCircle2 className="w-4 h-4" />
-                <span>保存并应用该商品 ({customImages.length}张实拍)</span>
+                <span>{isSaving ? '正在保存商品素材...' : `保存并应用该商品 (${customImages.length}张实拍)`}</span>
               </button>
             )}
           </div>

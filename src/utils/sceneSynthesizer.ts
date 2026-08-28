@@ -235,8 +235,8 @@ export async function renderCompleteHeroSlotImage(options: CompleteHeroSlotRende
     bgImageUrl,
     headline,
     subheadline,
-    priceTag = '69.9',
-    originalPriceTag = '128.0',
+    priceTag = '',
+    originalPriceTag = '',
     badgeText,
     themeAccent = '#ef4444',
     displayMode = 'commercial_banner',
@@ -323,11 +323,11 @@ export async function renderCompleteHeroSlotImage(options: CompleteHeroSlotRende
   // Slot 1: High CTR Master Selling Point & Promo Card
   if (slot === 'slot_1_ctr') {
     renderRefinedSlot1CtrGraphics(ctx, width, height, {
-      headline: headline || `${productName || '镇店爆款'} · 现货秒发`,
-      subheadline: subheadline || (sellingPoints[0] ? `★ ${sellingPoints[0]}` : '源头直供 · 假一赔十 · 破损包赔'),
+      headline: headline || `${productName || '商品标题待补充'}`,
+      subheadline: subheadline || (sellingPoints[0] ? `★ ${sellingPoints[0]}` : '卖点信息待商家核对'),
       priceTag,
       originalPriceTag,
-      badgeText: badgeText || (platformId === '1688' ? '🏭 源头厂家' : '🔥 爆款推荐'),
+      badgeText: badgeText || '信息待核对',
       themeAccent: platformId === '1688' ? '#f97316' : themeAccent
     });
   }
@@ -502,9 +502,9 @@ function renderRefinedSlot1CtrGraphics(ctx: CanvasRenderingContext2D, width: num
   ctx.fillStyle = '#ffffff';
   ctx.font = 'bold 11px sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('官方正品', badgeX, badgeY - 5);
+  ctx.fillText('信息待核对', badgeX, badgeY - 5);
   ctx.font = 'bold 10px sans-serif';
-  ctx.fillText('假一赔十', badgeX, badgeY + 10);
+  ctx.fillText('发布前确认', badgeX, badgeY + 10);
 
   ctx.restore();
 }
@@ -543,7 +543,7 @@ function renderRefinedSlot2DetailGraphics(ctx: CanvasRenderingContext2D, width: 
   ctx.fillStyle = '#0f172a';
   ctx.font = 'bold 14px sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('🛡️ 权威严苛工学质检认证 · 100% 出厂全检保障', width * 0.5, bBarY + 28);
+  ctx.fillText('品质与检测信息请以商家提供的真实资料为准', width * 0.5, bBarY + 28);
 
   ctx.restore();
 }

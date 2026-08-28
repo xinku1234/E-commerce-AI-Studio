@@ -213,7 +213,7 @@ async function renderSingleModuleSlice(
 
     ctx.fillStyle = '#f59e0b';
     ctx.font = 'bold 18px sans-serif';
-    ctx.fillText(`✦ ${mod.content?.highlight || '精工品质保障 · 官方正品首发'}`, cx, bannerY + 40);
+    ctx.fillText(`✦ ${mod.content?.highlight || '商品亮点待商家核对后填写'}`, cx, bannerY + 40);
     return;
   }
 
@@ -291,10 +291,10 @@ async function renderSingleModuleSlice(
     ctx.fillText(mod.subtitle || '每一处细节，皆是科技与美学的结晶', cx, 105);
 
     const features = mod.content?.featuresList || [
-      { name: '自研高效能架构', desc: '运算响应速度提升300%，能耗大幅降低' },
-      { name: '航天级选材用料', desc: '轻量化高强度结构，防刮耐磨历久弥新' },
-      { name: '微米级精密工学', desc: '黄金贴合弧度，长时间使用舒适自如' },
-      { name: '智能温控与安全保障', desc: '毫秒级动态调控，全天候守护稳定运行' }
+      { name: '核心功能', desc: '待商家根据真实商品资料补充' },
+      { name: '材质与工艺', desc: '待商家根据实物和供应链资料核对' },
+      { name: '尺寸与适用范围', desc: '待商家补充准确参数' },
+      { name: '使用与安全说明', desc: '待商家根据说明书补充' }
     ];
 
     const cardW = width - 80;
@@ -403,9 +403,9 @@ async function renderSingleModuleSlice(
     const specs = mod.content?.specsList || [
       { key: '商品名称', value: product.name },
       { key: '所属类目', value: product.category },
-      { key: '核心材质', value: '航空级合金 + 纳米亲肤涂层' },
-      { key: '执行标准', value: 'GB/T 2026-8848 国际权威检测' },
-      { key: '包装清单', value: '主机*1、充电配件*1、官方说明书/保修卡*1' }
+      { key: '核心材质', value: '待商家按实物补充' },
+      { key: '执行标准', value: '待商家按真实检测或备案资料补充' },
+      { key: '包装清单', value: '待商家按实际包装补充' }
     ];
 
     const tY = 150;
@@ -447,10 +447,10 @@ async function renderSingleModuleSlice(
     ctx.fillText(mod.subtitle || '每一次选择，皆享全程无忧保障', cx, 105);
 
     const badges = mod.content?.badges || [
-      { label: '7天无理由退换', sub: '赠送退货运费险' },
-      { label: '3年官方全国联保', sub: '全国网点售后保障' },
-      { label: '顺丰极速速达', sub: '次日直达保障' },
-      { label: '100% 正品验真', sub: '一物一码官方防伪' }
+      { label: '发货时效', sub: '待商家补充' },
+      { label: '退换政策', sub: '待商家补充' },
+      { label: '质保范围', sub: '待商家补充' },
+      { label: '客服方式', sub: '待商家补充' }
     ];
 
     const gW = (width - 100) / 2;

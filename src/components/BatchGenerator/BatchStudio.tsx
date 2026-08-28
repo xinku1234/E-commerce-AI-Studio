@@ -15,6 +15,9 @@ import {
 import { BatchTask, ProductItem, PlatformId } from '../../types';
 import { PLATFORMS_DATA, SAMPLE_PRODUCTS, SCENE_STYLES } from '../../data/presets';
 import { packageAndDownloadZip, fireSuccessConfetti } from '../../utils/exportUtils';
+import { safeFetchJson } from '../../utils/apiUtils';
+import { synthesizeCommercialStudioScene, renderCompleteHeroSlotImage } from '../../utils/sceneSynthesizer';
+import { validateEcommerceOutput } from '../../utils/imageQuality';
 
 interface BatchStudioProps {
   batchTasks: BatchTask[];
@@ -33,15 +36,17 @@ export const BatchStudio: React.FC<BatchStudioProps> = ({
 }) => {
   const [filterPlatform, setFilterPlatform] = useState<string>('all');
   const [isProcessingBatch, setIsProcessingBatch] = useState<boolean>(false);
+  const availableProducts = [currentProduct, ...SAMPLE_PRODUCTS.filter(product => product.id !== currentProduct.id)];
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([currentProduct.id, SAMPLE_PRODUCTS[1].id]);
   const [selectedPlatforms, setSelectedPlatforms] = useState<PlatformId[]>(['taobao', 'jd', 'douyin', 'amazon']);
+  const [batchError, setBatchError] = useState<string | null>(null);
 
   // Quick generate matrix
   const handleGenerateMatrix = () => {
     const newTasks: BatchTask[] = [];
     
     selectedProductIds.forEach((pId) => {
-      const prod = SAMPLE_PRODUCTS.find(p => p.id === pId) || currentProduct;
+      const prod = availableProducts.find(p => p.id === pId) || currentProduct;
       selectedPlatforms.forEach((platId) => {
         const plat = PLATFORMS_DATA.find(p => p.id === platId) || PLATFORMS_DATA[0];
         newTasks.push({
@@ -66,28 +71,78 @@ export const BatchStudio: React.FC<BatchStudioProps> = ({
 
   const handleStartBatchRun = async (tasksToRun: BatchTask[]) => {
     setIsProcessingBatch(true);
+    setBatchError(null);
     let updated = [...tasksToRun];
 
     for (let i = 0; i < updated.length; i++) {
       if (updated[i].status !== 'completed') {
-        updated[i] = { ...updated[i], status: 'processing', progress: 30 };
+        const task = updated[i];
+        const product = availableProducts.find(p => p.id === task.productId) || currentProduct;
+        updated[i] = { ...task, status: 'processing', progress: 15 };
         onUpdateTasks([...updated]);
-        
-        // Wait simulated generation time
-        await new Promise(r => setTimeout(r, 450));
-        
-        updated[i] = {
-          ...updated[i],
-          status: 'completed',
-          progress: 100,
-          resultImageUrl: updated[i].productImage
-        };
+
+        try {
+          const response = await safeFetchJson('/api/generate-product-image', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              prompt: `Commercial e-commerce product photography for ${product.name}, optimized for ${task.platform}.`,
+              negativePrompt: 'blurry, distorted product, duplicate object, watermark, illegible text',
+              aspectRatio: task.aspectRatio,
+              imageBase64: product.imageUrl,
+              stylePreset: task.styleId,
+              imageModel: 'gemini-3.1-flash-image'
+            })
+          }, 25000);
+          const data = response.data || {};
+          updated[i] = { ...updated[i], progress: 65 };
+          onUpdateTasks([...updated]);
+
+          const aiBackground = data.imageUrl || synthesizeCommercialStudioScene({
+            sceneStyleId: task.styleId,
+            platformId: task.platform,
+            aspectRatio: task.aspectRatio,
+            productName: product.name
+          });
+          const resultImageUrl = await renderCompleteHeroSlotImage({
+            slot: task.platform === 'amazon' ? 'slot_5_whitebg' : 'slot_1_ctr',
+            productImage: product.imageUrl,
+            productName: product.name,
+            category: product.category,
+            sellingPoints: product.sellingPoints,
+            specs: product.specs,
+            platformId: task.platform,
+            bgImageUrl: aiBackground,
+            headline: product.sellingPoints?.[0],
+            subheadline: product.sellingPoints?.[1],
+            badgeText: task.platform === 'amazon' ? undefined : '商品主图',
+            displayMode: task.platform === 'amazon' ? 'pure_photo' : 'commercial_banner',
+            width: task.aspectRatio === '3:4' ? 768 : 1024,
+            height: task.aspectRatio === '3:4' ? 1024 : 1024
+          });
+          if (!resultImageUrl) throw new Error('渲染结果为空');
+          const quality = await validateEcommerceOutput(resultImageUrl, {
+            aspectRatio: task.aspectRatio,
+            requireWhiteBackground: task.platform === 'amazon'
+          });
+
+          updated[i] = {
+            ...updated[i],
+            status: 'completed',
+            progress: 100,
+            resultImageUrl,
+            complianceScore: quality.score
+          };
+        } catch (error: any) {
+          updated[i] = { ...updated[i], status: 'failed', progress: 0 };
+          setBatchError(error?.message || `任务 ${task.productName} 生成失败`);
+        }
         onUpdateTasks([...updated]);
       }
     }
 
     setIsProcessingBatch(false);
-    fireSuccessConfetti();
+    if (updated.some(task => task.status === 'completed')) fireSuccessConfetti();
   };
 
   const handleDownloadAllZip = async () => {
@@ -98,8 +153,15 @@ export const BatchStudio: React.FC<BatchStudioProps> = ({
       files.push({
         name: `${task.productName}_${platName}_${task.aspectRatio}_主图.txt`,
         folder: `${platName}物料包`,
-        textContent: `商品: ${task.productName}\n平台: ${platName}\n比例: ${task.aspectRatio}\n合规分: ${task.complianceScore}%\n生成状态: 成功`
+        textContent: `商品: ${task.productName}\n平台: ${platName}\n比例: ${task.aspectRatio}\n合规分: ${task.complianceScore}%\n生成状态: ${task.status}`
       });
+      if (task.resultImageUrl) {
+        files.push({
+          name: `${task.productName}_${platName}_${task.aspectRatio}_主图.png`,
+          folder: `${platName}物料包`,
+          dataUrl: task.resultImageUrl
+        } as any);
+      }
     });
 
     await packageAndDownloadZip(files as any, `电商多渠道批量主图与物料包_${Date.now()}.zip`);
@@ -155,6 +217,12 @@ export const BatchStudio: React.FC<BatchStudioProps> = ({
           </div>
         </div>
 
+        {batchError && (
+          <div className="px-3 py-2 bg-rose-950/30 border border-rose-800/60 rounded-lg text-xs text-rose-200">
+            {batchError} 失败任务可点击“开始全部队列生成”重试。
+          </div>
+        )}
+
         {/* Matrix Generator Selector Box */}
         <div className="p-4 bg-slate-950/70 border border-slate-800 rounded-xl space-y-3">
           <div className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
@@ -167,11 +235,14 @@ export const BatchStudio: React.FC<BatchStudioProps> = ({
             <div>
               <label className="text-[11px] font-semibold text-slate-400 block mb-1.5">选择商品：</label>
               <div className="flex flex-wrap gap-1.5">
-                {SAMPLE_PRODUCTS.map((prod) => {
+                {availableProducts.map((prod) => {
                   const isChecked = selectedProductIds.includes(prod.id);
                   return (
                     <button
                       key={prod.id}
+                      type="button"
+                      aria-label={`选择商品 ${prod.name}`}
+                      aria-pressed={isChecked}
                       onClick={() => {
                         if (isChecked) {
                           if (selectedProductIds.length > 1) {
@@ -203,6 +274,9 @@ export const BatchStudio: React.FC<BatchStudioProps> = ({
                   return (
                     <button
                       key={plat.id}
+                      type="button"
+                      aria-label={`选择平台 ${plat.name}`}
+                      aria-pressed={isChecked}
                       onClick={() => {
                         if (isChecked) {
                           if (selectedPlatforms.length > 1) {
@@ -229,6 +303,7 @@ export const BatchStudio: React.FC<BatchStudioProps> = ({
 
           <div className="flex justify-end pt-1">
             <button
+              id="btn-create-batch-matrix"
               onClick={handleGenerateMatrix}
               className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-rose-600 hover:from-amber-400 hover:to-rose-500 text-white text-xs font-bold shadow"
             >
@@ -297,7 +372,7 @@ export const BatchStudio: React.FC<BatchStudioProps> = ({
                 >
                   <div className="flex gap-3 items-start">
                     <img
-                      src={task.productImage}
+                      src={task.resultImageUrl || task.productImage}
                       alt={task.productName}
                       referrerPolicy="no-referrer"
                       className="w-16 h-16 rounded-lg object-cover bg-slate-900 border border-slate-700 flex-shrink-0"
@@ -328,6 +403,10 @@ export const BatchStudio: React.FC<BatchStudioProps> = ({
                       ) : task.status === 'processing' ? (
                         <span className="text-amber-400 font-medium flex items-center gap-1">
                           <Clock className="w-3.5 h-3.5 animate-spin" /> 生成中 ({task.progress}%)
+                        </span>
+                      ) : task.status === 'failed' ? (
+                        <span className="text-rose-400 font-medium flex items-center gap-1">
+                          <RotateCcw className="w-3.5 h-3.5" /> 生成失败
                         </span>
                       ) : (
                         <span className="text-slate-500 font-medium">排队等待中</span>

@@ -1,5 +1,72 @@
 import { ImageQualityReport } from '../types';
 
+export interface EcommerceOutputValidation {
+  score: number;
+  status: 'passed' | 'warning';
+  issues: string[];
+  width: number;
+  height: number;
+  whiteBackgroundRatio?: number;
+}
+
+export async function validateEcommerceOutput(
+  imageSource: string,
+  options: { aspectRatio?: string; requireWhiteBackground?: boolean } = {}
+): Promise<EcommerceOutputValidation> {
+  const report = await analyzeImageQuality(imageSource);
+  const issues: string[] = [];
+  const { width, height } = report.resolution;
+  let score = Math.round(report.resolution.score * 0.45 + report.sharpness.score * 0.35 + report.brightness.score * 0.20);
+
+  const expectedRatios: Record<string, number> = { '1:1': 1, '3:4': 0.75, '4:3': 4 / 3, '9:16': 9 / 16, '16:9': 16 / 9 };
+  const expected = options.aspectRatio ? expectedRatios[options.aspectRatio] : undefined;
+  if (expected && Math.abs(width / height - expected) > 0.035) {
+    score -= 20;
+    issues.push(`输出画幅为 ${width}:${height}，与目标 ${options.aspectRatio} 不一致`);
+  }
+  if (Math.min(width, height) < 700) {
+    issues.push('输出短边低于 700px，不建议直接作为主图发布');
+  }
+  if (report.sharpness.status === 'fail') issues.push('输出清晰度不足，建议重新生成');
+
+  let whiteBackgroundRatio: number | undefined;
+  if (options.requireWhiteBackground) {
+    whiteBackgroundRatio = await measureWhiteBackgroundRatio(imageSource);
+    // Pure-white catalog images naturally score as overexposed in a generic photo check.
+    score = Math.round(report.resolution.score * 0.5 + report.sharpness.score * 0.3 + whiteBackgroundRatio * 100 * 0.2);
+    if (whiteBackgroundRatio < 0.82) {
+      score -= 25;
+      issues.push(`白底覆盖率约 ${Math.round(whiteBackgroundRatio * 100)}%，未达到建议值 82%`);
+    }
+  }
+
+  score = Math.max(0, Math.min(100, score));
+  return { score, status: score >= 65 && issues.length === 0 ? 'passed' : 'warning', issues, width, height, whiteBackgroundRatio };
+}
+
+function measureWhiteBackgroundRatio(imageSource: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const sample = 240;
+      canvas.width = sample;
+      canvas.height = sample;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return reject(new Error('Canvas 2D context not available'));
+      ctx.drawImage(img, 0, 0, sample, sample);
+      const data = ctx.getImageData(0, 0, sample, sample).data;
+      let white = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i] >= 245 && data[i + 1] >= 245 && data[i + 2] >= 245 && data[i + 3] >= 250) white++;
+      }
+      resolve(white / (data.length / 4));
+    };
+    img.onerror = () => reject(new Error('无法加载生成结果'));
+    img.src = imageSource;
+  });
+}
+
 /**
  * Analyzes an image for sharpness, brightness/exposure, and resolution.
  * Returns a comprehensive ImageQualityReport with a calculated Quality Score.

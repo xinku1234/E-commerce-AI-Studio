@@ -14,6 +14,50 @@ export interface GeneratedPromptResult {
 }
 
 /**
+ * Converts a free-form creative direction into a stable, reusable prompt contract.
+ * Keeping the blocks explicit makes prompts easier to review, batch, and route to
+ * different image providers without changing the product identity requirements.
+ */
+export function buildEcommercePromptBlocks(options: {
+  productName: string;
+  creativeDirection: string;
+  platform: string;
+  aspectRatio: string;
+  negativePrompt: string;
+  hasReferenceImages?: boolean;
+  locale?: 'en' | 'zh';
+}): string {
+  if (options.locale === 'en') {
+    const reference = options.hasReferenceImages
+      ? 'REFERENCE PRESERVATION: preserve exact silhouette, proportions, colors, materials, labels, ports, buttons, seams, and construction from the supplied photos. Do not redesign or merge variants.'
+      : 'PRODUCT IDENTITY: depict one coherent product with credible geometry and materials. Do not invent brand marks or product variants.';
+    return [
+      'E-COMMERCE IMAGE PROMPT v1',
+      `SUBJECT: ${options.productName}`,
+      `OBJECTIVE: create a commercial product visual for ${options.platform}.`,
+      reference,
+      `COMPOSITION: ${options.creativeDirection}; ${options.aspectRatio} aspect ratio, clear subject separation, simple background, safe margins.`,
+      'LIGHTING AND MATERIAL: physically plausible commercial lighting, accurate material response, natural contact shadow, clean edges, controlled reflections.',
+      'PLATFORM CONSTRAINTS: keep the product as the only visual priority; do not render promotional text, price, logo, or watermark unless explicitly requested.',
+      `NEGATIVE CONSTRAINTS: ${options.negativePrompt}`
+    ].join('\n');
+  }
+  const reference = options.hasReferenceImages
+    ? '参考图约束：严格保持商品轮廓、比例、颜色、材质、标签、接口、按键、车线和结构，不重设计、不混合不同商品。'
+    : '商品身份约束：只生成一个结构完整、比例可信的商品，不虚构品牌标识或额外型号。';
+  return [
+    '电商生图提示词协议 v1',
+    `主体：${options.productName}`,
+    `目标：为${options.platform}生成可用于商品展示的商业视觉。`,
+    reference,
+    `构图：${options.creativeDirection}；画幅 ${options.aspectRatio}，主体清晰分离，背景简洁，保留安全边距。`,
+    '光线与材质：物理可信的商业影棚或生活方式布光，准确还原材质反射，保留自然接触阴影，避免脏反光。',
+    '平台约束：商品是唯一视觉重点；除非明确要求，不在图片内生成促销文字、价格、Logo 或水印。',
+    `负面约束：${options.negativePrompt}`
+  ].join('\n');
+}
+
+/**
  * Intelligently combines Product characteristics (materials, category, form factor)
  * with Target Platform specifications (1688, Taobao, Douyin, Amazon, JD, Pinduoduo, Xiaohongshu)
  * to generate professional, tailored commercial photography prompts.
@@ -209,8 +253,24 @@ export function generatePlatformProductPrompt(
   }
 
   return {
-    promptEn,
-    promptCn,
+    promptEn: buildEcommercePromptBlocks({
+      productName,
+      creativeDirection: promptEn,
+      platform: platformId,
+      aspectRatio,
+      negativePrompt,
+      hasReferenceImages: Boolean(product?.images?.length || product?.imageUrl),
+      locale: 'en'
+    }),
+    promptCn: buildEcommercePromptBlocks({
+      productName,
+      creativeDirection: promptCn,
+      platform: platformId,
+      aspectRatio,
+      negativePrompt,
+      hasReferenceImages: Boolean(product?.images?.length || product?.imageUrl),
+      locale: 'zh'
+    }),
     lightingMood,
     compositionTip,
     visualTip,

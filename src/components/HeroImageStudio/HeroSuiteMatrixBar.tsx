@@ -148,8 +148,12 @@ export const HeroSuiteMatrixBar: React.FC<HeroSuiteMatrixBarProps> = ({
                 </span>
 
                 {item.isGenerated || item.imageUrl ? (
-                  <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-medium">
-                    <CheckCircle2 className="w-3 h-3" /> 已就绪
+                  <span className={`flex items-center gap-1 text-[10px] font-medium ${
+                    item.qualityStatus === 'warning' ? 'text-amber-400' :
+                    item.qualityStatus === 'fallback' ? 'text-sky-400' : 'text-emerald-400'
+                  }`} title={item.qualityIssues?.join('；')}>
+                    <CheckCircle2 className="w-3 h-3" />
+                    {item.qualityScore != null ? `${item.qualityScore}分` : '已就绪'}
                   </span>
                 ) : (
                   <span className="text-[10px] text-slate-500 font-mono">
@@ -196,6 +200,14 @@ export const HeroSuiteMatrixBar: React.FC<HeroSuiteMatrixBarProps> = ({
                 <p className="text-[10px] text-slate-400 line-clamp-2 leading-relaxed" title={item.slotPurpose}>
                   {item.slotPurpose}
                 </p>
+
+                {item.sourceMode && (
+                  <div className={`mt-1 text-[9px] font-medium ${item.sourceMode === 'ai' ? 'text-emerald-400' : 'text-sky-400'}`}>
+                    {item.sourceMode === 'ai' ? 'AI 生成' : '本地合成回退'}
+                    {item.qualityStatus === 'warning' ? ' · 建议复核' : ''}
+                    {item.retryCount ? ` · 重试 ${item.retryCount} 次` : ''}
+                  </div>
+                )}
                 
                 {isActive && (
                   <div className={`mt-1.5 text-[10px] font-bold flex items-center gap-1 ${

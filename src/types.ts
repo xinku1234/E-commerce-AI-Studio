@@ -28,6 +28,11 @@ export interface HeroSuiteItem {
   isGenerated: boolean;
   status: 'idle' | 'generating' | 'completed' | 'failed';
   customStyleName?: string;
+  qualityScore?: number;
+  qualityStatus?: 'passed' | 'warning' | 'fallback';
+  qualityIssues?: string[];
+  sourceMode?: 'ai' | 'procedural';
+  retryCount?: number;
 }
 
 export interface PlatformConfig {

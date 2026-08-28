@@ -1,15 +1,20 @@
 {
-  "name": "react-example",
+  "name": "e-commerce-ai-studio",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "AI-assisted e-commerce visual production studio for product images, detail pages, batch tasks, and channel workflow demos.",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true }); require('node:fs').rmSync('server.js', { force: true })\"",
+    "lint": "tsc --noEmit",
+    "check": "npm run lint && npm run build",
+    "test": "npm run check && node scripts/smoke.mjs",
+    "test:e2e": "playwright test",
+    "test:all": "npm test && npm run test:e2e"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -26,6 +31,7 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/canvas-confetti": "^1.9.0",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",

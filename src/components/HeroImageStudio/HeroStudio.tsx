@@ -55,7 +55,7 @@ import {
 } from '../../data/presets';
 import { generatePlatformProductPrompt, fetchMultimodalPlatformPrompt } from '../../utils/promptGenerator';
 import { exportCanvasAsImage, packageAndDownloadZip, fireSuccessConfetti } from '../../utils/exportUtils';
-import { analyzeImageQuality } from '../../utils/imageQuality';
+import { analyzeImageQuality, validateEcommerceOutput } from '../../utils/imageQuality';
 import { smartRemoveBackground, optimizeImageForUpload } from '../../utils/imageMatting';
 import { synthesizeCommercialStudioScene, renderCompleteHeroSlotImage } from '../../utils/sceneSynthesizer';
 import { safeFetchJson } from '../../utils/apiUtils';
@@ -192,7 +192,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
   const [customPromptConfig, setCustomPromptConfig] = useState<CustomEndpointConfig>(() => {
     const saved = localStorage.getItem('CUSTOM_PROMPT_CONFIG');
     if (saved) {
-      try { return JSON.parse(saved); } catch (e) {}
+      try { return { ...JSON.parse(saved), apiKey: '' }; } catch (e) {}
     }
     return {
       endpointUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
@@ -208,7 +208,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
   const [customImageConfig, setCustomImageConfig] = useState<CustomEndpointConfig>(() => {
     const saved = localStorage.getItem('CUSTOM_IMAGE_CONFIG');
     if (saved) {
-      try { return JSON.parse(saved); } catch (e) {}
+      try { return { ...JSON.parse(saved), apiKey: '' }; } catch (e) {}
     }
     return {
       endpointUrl: 'https://api.siliconflow.cn/v1',
@@ -244,12 +244,30 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
   }, [selectedImageModel]);
 
   useEffect(() => {
-    localStorage.setItem('CUSTOM_PROMPT_CONFIG', JSON.stringify(customPromptConfig));
+    const { apiKey: _apiKey, ...safeConfig } = customPromptConfig;
+    localStorage.setItem('CUSTOM_PROMPT_CONFIG', JSON.stringify(safeConfig));
   }, [customPromptConfig]);
 
   useEffect(() => {
-    localStorage.setItem('CUSTOM_IMAGE_CONFIG', JSON.stringify(customImageConfig));
+    const { apiKey: _apiKey, ...safeConfig } = customImageConfig;
+    localStorage.setItem('CUSTOM_IMAGE_CONFIG', JSON.stringify(safeConfig));
   }, [customImageConfig]);
+
+  useEffect(() => {
+    // Remove API keys written by versions prior to the in-memory-only policy.
+    for (const key of ['CUSTOM_PROMPT_CONFIG', 'CUSTOM_IMAGE_CONFIG']) {
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if ('apiKey' in parsed) {
+            delete parsed.apiKey;
+            localStorage.setItem(key, JSON.stringify(parsed));
+          }
+        } catch { /* ignore malformed legacy data */ }
+      }
+    }
+  }, []);
 
   // Analysis and Generation States
   const [isAnalyzingProduct, setIsAnalyzingProduct] = useState<boolean>(false);
@@ -305,17 +323,17 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
   const [activePromptTab, setActivePromptTab] = useState<'en' | 'cn' | 'settings'>('en');
 
   // Visual Overlays State
-  const [mainTitle, setMainTitle] = useState<string>(currentProduct.heroTitles[0] || '极简静界 · 旗舰降噪');
-  const [subTitle, setSubTitle] = useState<string>(currentProduct.sellingPoints[0] || '45dB深度降噪 60小时长续航');
-  const [priceTag, setPriceTag] = useState<string>(currentProduct.price || '399');
-  const [originalPriceTag, setOriginalPriceTag] = useState<string>(currentProduct.originalPrice || '699');
-  const [discountBadge, setDiscountBadge] = useState<string>(currentProduct.discountTag || '立省300元');
+  const [mainTitle, setMainTitle] = useState<string>(currentProduct.heroTitles[0] || '商品标题待补充');
+  const [subTitle, setSubTitle] = useState<string>(currentProduct.sellingPoints[0] || '卖点待商家核对');
+  const [priceTag, setPriceTag] = useState<string>(currentProduct.price || '');
+  const [originalPriceTag, setOriginalPriceTag] = useState<string>(currentProduct.originalPrice || '');
+  const [discountBadge, setDiscountBadge] = useState<string>(currentProduct.discountTag || '');
   
   // Platform Certification & Marketing Badge (Optional & Fully Customizable)
-  const [showBadge, setShowBadge] = useState<boolean>(true);
-  const [selectedBadge, setSelectedBadge] = useState<string>('badge_billion_subsidy'); // 'none' | 'custom' | preset id
-  const [customBadgeText, setCustomBadgeText] = useState<string>('官方正品');
-  const [customBadgeSubText, setCustomBadgeSubText] = useState<string>('假一赔十');
+  const [showBadge, setShowBadge] = useState<boolean>(false);
+  const [selectedBadge, setSelectedBadge] = useState<string>('none'); // 'none' | 'custom' | preset id
+  const [customBadgeText, setCustomBadgeText] = useState<string>('');
+  const [customBadgeSubText, setCustomBadgeSubText] = useState<string>('');
   const [customBadgeType, setCustomBadgeType] = useState<'official_seal' | 'ribbon' | 'pill' | 'circle'>('official_seal');
   const [customBadgePosition, setCustomBadgePosition] = useState<'top-right' | 'top-left' | 'bottom-right' | 'bottom-left'>('top-right');
   const [customBadgeColor, setCustomBadgeColor] = useState<'gold' | 'red' | 'dark' | 'blue' | 'green' | 'orange'>('gold');
@@ -325,7 +343,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
   const [showPriceCard, setShowPriceCard] = useState<boolean>(true);
   const [showTitleOverlay, setShowTitleOverlay] = useState<boolean>(true);
   const [showWaistBanner, setShowWaistBanner] = useState<boolean>(false);
-  const [waistBannerText, setWaistBannerText] = useState<string>('限时大促 · 抢券立减 · 官方正品包邮');
+  const [waistBannerText, setWaistBannerText] = useState<string>('活动信息待核对');
   const [themeAccent, setThemeAccent] = useState<string>('#FF5000');
   const [renderMode, setRenderMode] = useState<'composite' | 'raw_photo'>('composite');
 
@@ -932,7 +950,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
 
     if (isCustom) {
       badgeType = customBadgeType;
-      badgeText = customBadgeText || '官方正品';
+      badgeText = customBadgeText || '信息待核对';
       badgeSubText = customBadgeSubText || '';
       badgePos = customBadgePosition;
       colorScheme = customBadgeColor;
@@ -1322,6 +1340,27 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
   };
 
   // Step 2: Generate Commercial Scene with Selected Image Engine & Real Photo Base
+  const requestProductImageWithRetry = async (
+    payload: Record<string, unknown>,
+    timeoutMs: number,
+    maxAttempts: 1 | 2 = 2
+  ): Promise<{ data: any; attempts: number }> => {
+    let lastData: any = {};
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const retryPrompt = attempt === 2
+        ? `${String(payload.prompt || '')}\nRETRY CORRECTION: return one complete, sharp product image; preserve exact product geometry; obey the requested aspect ratio; avoid text, watermarks, duplicate products, cropping, and clutter.`
+        : payload.prompt;
+      const res = await safeFetchJson('/api/generate-product-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, prompt: retryPrompt })
+      }, timeoutMs);
+      lastData = res.data || {};
+      if (res.ok && lastData.imageUrl) return { data: lastData, attempts: attempt };
+    }
+    return { data: lastData, attempts: maxAttempts };
+  };
+
   const doGenerateAiBg = async () => {
     setIsGeneratingAiImage(true);
     setFeedbackBanner(null);
@@ -1333,10 +1372,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
 
       const optimizedImage = await optimizeImageForUpload(activeProductImage, 960);
 
-      const res = await safeFetchJson('/api/generate-product-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const generationPayload = {
           prompt: aiCustomPrompt || activeScene.prompt,
           negativePrompt,
           aspectRatio,
@@ -1346,12 +1382,12 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
           customEndpointUrl: selectedImageModel === 'custom-image-engine' ? customImageConfig.endpointUrl : undefined,
           customApiKey: selectedImageModel === 'custom-image-engine' ? customImageConfig.apiKey : undefined,
           denoisingStrength
-        })
-      }, 25000);
+      };
+      let generation = await requestProductImageWithRetry(generationPayload, 25000);
 
-      const data = res.data || {};
+      let data = generation.data;
       let finalImageUrl = data.imageUrl;
-      const isReal = Boolean(data.isRealAiImage && data.imageUrl);
+      let isReal = Boolean(data.isRealAiImage && data.imageUrl);
       setIsRealAiGenerated(isReal);
 
       if (!finalImageUrl) {
@@ -1377,15 +1413,57 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
           bgImageUrl: finalImageUrl,
           headline: mainTitle,
           subheadline: subTitle,
-          priceTag: priceTag || currentProduct.price?.toString() || '69.9',
-          originalPriceTag: originalPriceTag || ((Number(currentProduct.price) || 50) * 1.8).toFixed(1),
-          badgeText: customBadgeText || '官方正品',
+      priceTag: priceTag || currentProduct.price?.toString() || '',
+      originalPriceTag: originalPriceTag || currentProduct.originalPrice?.toString() || '',
+      badgeText: customBadgeText || '',
           themeAccent: themeAccent || '#ef4444',
           width: 1024,
           height: (selectedPlatform === 'douyin' || selectedPlatform === 'xiaohongshu') ? 1365 : 1024
         });
 
-        const effectiveResultUrl = completeMasterUrl || finalImageUrl;
+        let effectiveResultUrl = completeMasterUrl || finalImageUrl;
+        let outputValidation = await validateEcommerceOutput(effectiveResultUrl, {
+          aspectRatio: (selectedPlatform === 'douyin' || selectedPlatform === 'xiaohongshu') ? '3:4' : '1:1',
+          requireWhiteBackground: activeSuiteSlot === 'slot_5_whitebg' || selectedPlatform === 'amazon'
+        });
+
+        if (isReal && outputValidation.score < 55 && generation.attempts === 1) {
+          const retry = await requestProductImageWithRetry({
+            ...generationPayload,
+            prompt: `${generationPayload.prompt}\nQUALITY CORRECTION: ${outputValidation.issues.join('; ') || 'improve sharpness, framing, and product readability'}`
+          }, 25000, 1);
+          if (retry.data?.imageUrl) {
+            const retryMaster = await renderCompleteHeroSlotImage({
+              slot: activeSuiteSlot,
+              productImage: prodImageToUse,
+              productName: currentProduct.name,
+              category: currentProduct.category,
+              sellingPoints: currentProduct.sellingPoints,
+              specs: currentProduct.specs,
+              platformId: selectedPlatform,
+              bgImageUrl: retry.data.imageUrl,
+              headline: mainTitle,
+              subheadline: subTitle,
+              priceTag: priceTag || currentProduct.price?.toString() || '',
+              originalPriceTag: originalPriceTag || currentProduct.originalPrice?.toString() || '',
+              badgeText: customBadgeText || '',
+              themeAccent: themeAccent || '#ef4444',
+              width: 1024,
+              height: (selectedPlatform === 'douyin' || selectedPlatform === 'xiaohongshu') ? 1365 : 1024
+            });
+            const retryResultUrl = retryMaster || retry.data.imageUrl;
+            const retryValidation = await validateEcommerceOutput(retryResultUrl, {
+              aspectRatio: (selectedPlatform === 'douyin' || selectedPlatform === 'xiaohongshu') ? '3:4' : '1:1',
+              requireWhiteBackground: activeSuiteSlot === 'slot_5_whitebg' || selectedPlatform === 'amazon'
+            });
+            generation = { data: retry.data, attempts: 2 };
+            if (retryValidation.score > outputValidation.score) {
+              data = retry.data;
+              effectiveResultUrl = retryResultUrl;
+              outputValidation = retryValidation;
+            }
+          }
+        }
         setAiGeneratedBgUrl(effectiveResultUrl);
         setRenderMode('composite');
         setAiCompositeMode('ai_full_render');
@@ -1398,16 +1476,23 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
             ...updatedSuite[currentSlotIndex],
             imageUrl: effectiveResultUrl,
             isGenerated: true,
-            status: 'completed'
+            status: 'completed',
+            qualityScore: outputValidation.score,
+            qualityStatus: isReal ? outputValidation.status : 'fallback',
+            qualityIssues: outputValidation.issues,
+            sourceMode: isReal ? 'ai' : 'procedural',
+            retryCount: Math.max(0, generation.attempts - 1)
           };
           setHeroSuite(updatedSuite);
         }
 
         setFeedbackBanner({
-          text: isReal 
-            ? `🎉 大模型生成真实商业大片成功！已由【${data.modelUsed || 'AI 商业摄影引擎'}】生成超高保真商业广告图！`
-            : `商业大片已生成！已应用【${platformConfig.name}】平台视觉规范、影棚光影与智能去底融合`,
-          type: 'success'
+          text: isReal
+            ? outputValidation.status === 'passed'
+              ? `大模型图片已生成并通过成品检查，质量评分 ${outputValidation.score} 分${generation.attempts > 1 ? '，已自动重试 1 次' : ''}。`
+              : `大模型图片已生成，成品评分 ${outputValidation.score} 分；${outputValidation.issues[0] || '建议人工检查后再发布'}。`
+            : `模型未返回有效图片，已使用本地合成模式完成成品，质量评分 ${outputValidation.score} 分。`,
+          type: outputValidation.status === 'passed' ? 'success' : 'info'
         });
         fireSuccessConfetti();
       }
@@ -1425,9 +1510,9 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
         bgImageUrl: null,
         headline: mainTitle,
         subheadline: subTitle,
-        priceTag: priceTag || currentProduct.price?.toString() || '69.9',
-        originalPriceTag: originalPriceTag || ((Number(currentProduct.price) || 50) * 1.8).toFixed(1),
-        badgeText: customBadgeText || '官方正品',
+        priceTag: priceTag || currentProduct.price?.toString() || '',
+        originalPriceTag: originalPriceTag || currentProduct.originalPrice?.toString() || '',
+        badgeText: customBadgeText || '',
         themeAccent: themeAccent || '#ef4444',
         width: 1024,
         height: (selectedPlatform === 'douyin' || selectedPlatform === 'xiaohongshu') ? 1365 : 1024
@@ -1513,7 +1598,9 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
 
   const doGenerateEntireSuite = async () => {
     setIsGeneratingSuite(true);
-    const updatedSuite = [...heroSuite];
+      const updatedSuite = [...heroSuite];
+      let fallbackCount = 0;
+      let warningCount = 0;
     
     try {
       const effectiveImageModelName = selectedImageModel === 'custom-image-engine'
@@ -1528,10 +1615,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
         
         let slotBgImg: string | null = null;
         try {
-          const res = await safeFetchJson('/api/generate-product-image', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          const generation = await requestProductImageWithRetry({
               prompt: slot.prompt,
               negativePrompt,
               aspectRatio: selectedPlatform === 'douyin' ? '3:4' : (selectedPlatform === 'xiaohongshu' ? '3:4' : '1:1'),
@@ -1541,13 +1625,15 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
               customEndpointUrl: selectedImageModel === 'custom-image-engine' ? customImageConfig.endpointUrl : undefined,
               customApiKey: selectedImageModel === 'custom-image-engine' ? customImageConfig.apiKey : undefined,
               denoisingStrength
-            })
           }, 18000);
 
-          const data = res.data || {};
+          const data = generation.data;
           slotBgImg = data.imageUrl;
+          updatedSuite[i] = { ...updatedSuite[i], retryCount: Math.max(0, generation.attempts - 1) };
+          if (!slotBgImg) fallbackCount++;
         } catch (fetchErr) {
           console.warn(`AI model request fallback for slot ${slot.slot}:`, fetchErr);
+          fallbackCount++;
         }
 
         const prodImageToUse = (isAutoMattingEnabled && mattedProductImage) ? mattedProductImage : rawSlotBaseImage;
@@ -1564,20 +1650,30 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
           bgImageUrl: slotBgImg,
           headline: slot.headline || mainTitle,
           subheadline: slot.subheadline || subTitle,
-          priceTag: priceTag || currentProduct.price?.toString() || '69.9',
-          originalPriceTag: originalPriceTag || ((Number(currentProduct.price) || 50) * 1.8).toFixed(1),
-          badgeText: customBadgeText || '官方正品',
+          priceTag: priceTag || currentProduct.price?.toString() || '',
+          originalPriceTag: originalPriceTag || currentProduct.originalPrice?.toString() || '',
+          badgeText: customBadgeText || '',
           themeAccent: themeAccent || '#ef4444',
           width: 1024,
           height: (selectedPlatform === 'douyin' || selectedPlatform === 'xiaohongshu') ? 1365 : 1024
         });
 
         if (completeMasterImage) {
+          const outputValidation = await validateEcommerceOutput(completeMasterImage, {
+            aspectRatio: (selectedPlatform === 'douyin' || selectedPlatform === 'xiaohongshu') ? '3:4' : '1:1',
+            requireWhiteBackground: slot.slot === 'slot_5_whitebg' || selectedPlatform === 'amazon'
+          });
+          if (outputValidation.status === 'warning') warningCount++;
           updatedSuite[i] = {
             ...slot,
             imageUrl: completeMasterImage,
             isGenerated: true,
-            status: 'completed'
+            status: 'completed',
+            qualityScore: outputValidation.score,
+            qualityStatus: slotBgImg ? outputValidation.status : 'fallback',
+            qualityIssues: outputValidation.issues,
+            sourceMode: slotBgImg ? 'ai' : 'procedural',
+            retryCount: updatedSuite[i].retryCount || 0
           };
           setHeroSuite([...updatedSuite]);
           
@@ -1598,8 +1694,10 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
         setAiCompositeMode('ai_full_render');
       }
       setFeedbackBanner({
-        text: `🎉 5张黄金主图套图矩阵全部生成完毕！包含高转化点击、细节特写、实物尺寸、场景实拍与100%纯白底图，可直接打包导出发布！`,
-        type: 'success'
+        text: fallbackCount > 0 || warningCount > 0
+          ? `5张套图已完成质量检查：${fallbackCount} 张使用本地合成，${warningCount} 张建议人工复核。`
+          : '5张套图已全部生成并通过基础质量检查。',
+        type: fallbackCount > 0 || warningCount > 0 ? 'info' : 'success'
       });
       fireSuccessConfetti();
     } catch (err) {

@@ -26,6 +26,7 @@ export const PublishHub: React.FC<PublishHubProps> = ({ currentProduct }) => {
   const [selectedChannelIds, setSelectedChannelIds] = useState<PlatformId[]>(['taobao', 'jd', 'douyin', 'amazon']);
   const [isPublishing, setIsPublishing] = useState<boolean>(false);
   const [publishSuccessModal, setPublishSuccessModal] = useState<any | null>(null);
+  const [publishError, setPublishError] = useState<string | null>(null);
   
   // Publish configuration
   const [syncStock, setSyncStock] = useState<number>(500);
@@ -46,6 +47,7 @@ export const PublishHub: React.FC<PublishHubProps> = ({ currentProduct }) => {
   // Publish trigger
   const handleExecutePublish = async () => {
     setIsPublishing(true);
+    setPublishError(null);
     try {
       const res = await safeFetchJson('/api/publish-channels', {
         method: 'POST',
@@ -66,12 +68,15 @@ export const PublishHub: React.FC<PublishHubProps> = ({ currentProduct }) => {
       }, 15000);
 
       const data = res.data;
-      if (data && data.success) {
+      if (res.ok && data && data.success) {
         setPublishSuccessModal(data);
         fireSuccessConfetti();
+      } else {
+        setPublishError(res.error || '模拟发布请求失败，请确认服务端已启动。');
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Publish error:', e);
+      setPublishError(e?.message || '模拟发布请求失败，请稍后重试。');
     } finally {
       setIsPublishing(false);
     }
@@ -87,13 +92,13 @@ export const PublishHub: React.FC<PublishHubProps> = ({ currentProduct }) => {
           </div>
           <div>
             <h2 className="text-base font-bold text-white flex items-center gap-2">
-              多电商渠道一键发布与同步中枢
-              <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                已接入 {channels.filter(c => c.connected).length} 个官方商家后台
+              多电商渠道发布流程预览
+              <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                Demo 模式
               </span>
             </h2>
             <p className="text-xs text-slate-400">
-              自动执行平台合规审查（广告法违禁词、纯白底色值、安全边距），直接将主图与详情页长图推送至各平台草稿箱或正式上架。
+              预览平台适配、合规检查和分发结果。当前不会连接或写入任何真实商家后台。
             </p>
           </div>
         </div>
@@ -105,7 +110,7 @@ export const PublishHub: React.FC<PublishHubProps> = ({ currentProduct }) => {
           className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 via-orange-500 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white text-xs font-bold flex items-center gap-2 shadow-xl shadow-rose-600/30 disabled:opacity-50"
         >
           <Sparkles className="w-4 h-4" />
-          {isPublishing ? '正在全网同步物料...' : `一键发布至选中的 ${selectedChannelIds.length} 个电商平台`}
+          {isPublishing ? '正在生成模拟结果...' : `模拟分发至 ${selectedChannelIds.length} 个平台`}
         </button>
       </div>
 
@@ -117,7 +122,7 @@ export const PublishHub: React.FC<PublishHubProps> = ({ currentProduct }) => {
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <span className="text-xs font-bold text-white flex items-center gap-1.5">
                 <Store className="w-4 h-4 text-rose-500" />
-                已授权电商店铺列表 (勾选目标分发渠道)
+                示例渠道列表（选择目标平台）
               </span>
               <span className="text-xs text-slate-400">已选中 {selectedChannelIds.length} 家店铺</span>
             </div>
@@ -183,10 +188,10 @@ export const PublishHub: React.FC<PublishHubProps> = ({ currentProduct }) => {
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <span className="text-xs font-bold text-white flex items-center gap-1.5">
                 <SlidersHorizontal className="w-4 h-4 text-amber-400" />
-                全网同步参数配置
+                模拟分发参数
               </span>
               <span className="text-xs text-emerald-400 flex items-center gap-1">
-                <ShieldCheck className="w-3.5 h-3.5" /> AI合规自检通过
+                <ShieldCheck className="w-3.5 h-3.5" /> 规则预检示例
               </span>
             </div>
 
@@ -239,7 +244,7 @@ export const PublishHub: React.FC<PublishHubProps> = ({ currentProduct }) => {
                       : 'border-slate-800 bg-slate-800/40 text-slate-400'
                   }`}
                 >
-                  🚀 直接上架销售
+                  模拟正式发布
                 </button>
                 <button
                   onClick={() => setPublishStatusType('draft')}
@@ -249,7 +254,7 @@ export const PublishHub: React.FC<PublishHubProps> = ({ currentProduct }) => {
                       : 'border-slate-800 bg-slate-800/40 text-slate-400'
                   }`}
                 >
-                  📝 同步至草稿箱 (人工终审)
+                  模拟保存草稿
                 </button>
               </div>
             </div>
@@ -266,6 +271,13 @@ export const PublishHub: React.FC<PublishHubProps> = ({ currentProduct }) => {
                 <li>已避开抖音/小红书底部交互与购物车 UI 遮挡区域</li>
               </ul>
             </div>
+
+            {publishError && (
+              <div className="p-3 bg-rose-950/30 border border-rose-800/60 rounded-lg text-xs text-rose-200 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                <span>{publishError}</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -279,9 +291,9 @@ export const PublishHub: React.FC<PublishHubProps> = ({ currentProduct }) => {
                 <CheckCircle2 className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-white">多渠道分发成功！</h3>
+                <h3 className="text-base font-bold text-white">模拟分发完成</h3>
                 <p className="text-xs text-slate-400">
-                  批次编号：{publishSuccessModal.batchId} ｜ 成功同步 {publishSuccessModal.dispatchedCount} 个电商渠道
+                  批次编号：{publishSuccessModal.batchId} ｜ 已生成 {publishSuccessModal.dispatchedCount} 个渠道的预览结果，未提交至真实平台
                 </p>
               </div>
             </div>
@@ -295,12 +307,12 @@ export const PublishHub: React.FC<PublishHubProps> = ({ currentProduct }) => {
                   <div>
                     <div className="font-bold text-white">{res.channelName}</div>
                     <div className="text-[11px] text-slate-400 font-mono mt-0.5">
-                      远程商品编号: {res.remoteItemId}
+                      模拟商品编号: {res.remoteItemId}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                      已同步
+                      模拟完成
                     </span>
                   </div>
                 </div>
