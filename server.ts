@@ -22,6 +22,12 @@ app.use(requestContext);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
+function requireConfiguredModel(customEndpointUrl?: unknown) {
+  const ai = getAiCapabilities();
+  if (!ai.modelRequired || ai.providers.gemini.configured || (typeof customEndpointUrl === 'string' && customEndpointUrl.trim())) return null;
+  return { success: false, error: "未绑定可用模型，请先配置 GEMINI_API_KEY 或测试通过自定义模型端点。", code: "MODEL_REQUIRED" };
+}
+
 // 1. Health check
 app.get("/api/health", (_req, res) => {
   const ai = getAiCapabilities();
@@ -29,6 +35,8 @@ app.get("/api/health", (_req, res) => {
     status: "ok",
     mode: ai.mode,
     ai: ai.providers,
+    modelRequired: ai.modelRequired,
+    modelReady: ai.providers.gemini.configured,
     publishMode: "simulation",
     timestamp: new Date().toISOString()
   });
@@ -908,6 +916,8 @@ ${hasImages ? `【核心指令：已输入 ${resolvedImageParts.length} 张商�
 // 3. AI Detail Page Modules Generator
 app.post("/api/generate-detail-page-modules", async (req, res) => {
   const { productName, category, targetPlatform, sellingPoints, customSpecs } = req.body || {};
+  const modelError = requireConfiguredModel(req.body?.customEndpointUrl);
+  if (modelError) return res.status(503).json(modelError);
   const fallbackModules = buildFallbackDetailModules({ productName, category, sellingPoints, customSpecs });
   try {
     const ai = getGeminiClient();
@@ -966,6 +976,8 @@ app.post("/api/generate-product-image", async (req, res) => {
       customApiKey,
       denoisingStrength = 0.65
     } = req.body;
+    const modelError = requireConfiguredModel(customEndpointUrl);
+    if (modelError) return res.status(503).json(modelError);
 
     const resolvedImageParts = await resolveImageParts(images, imageBase64);
 
@@ -981,6 +993,14 @@ app.post("/api/generate-product-image", async (req, res) => {
     });
     return res.json({ success: true, ...result });
   } catch (error: any) {
+    if (getAiCapabilities().modelRequired) {
+      return res.status(503).json({
+        success: false,
+        error: error?.message || "图片生成服务异常，请先确认模型配置。",
+        code: "MODEL_GENERATION_FAILED",
+        requestId: res.locals.requestId
+      });
+    }
     return res.json({
       success: true,
       provider: "procedural",
@@ -1118,7 +1138,10 @@ app.use(errorHandler);
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR === 'true' ? false : undefined
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);

@@ -33,6 +33,31 @@ export default function App() {
   });
   const [isProductModalOpen, setIsProductModalOpen] = useState<boolean>(false);
   const [hasLoadedStoredProduct, setHasLoadedStoredProduct] = useState(false);
+  const [modelRequired, setModelRequired] = useState(true);
+  const [serverModelReady, setServerModelReady] = useState(false);
+  // Start optimistically while the health probe is pending; a required-model
+  // server will switch this to locked as soon as its response arrives.
+  const [modelReady, setModelReady] = useState(true);
+  const [healthResolved, setHealthResolved] = useState(false);
+  const [modelConfigRequest, setModelConfigRequest] = useState(0);
+
+  useEffect(() => {
+    fetch('/api/health')
+      .then(response => response.json())
+      .then(data => {
+        setModelRequired(data.modelRequired !== false);
+        setServerModelReady(Boolean(data.modelReady));
+        if (data.modelRequired !== false && !data.modelReady) setModelReady(false);
+      })
+      .catch(() => {
+        setModelRequired(true);
+        setServerModelReady(false);
+        setModelReady(false);
+      })
+      .finally(() => {
+        setHealthResolved(true);
+      });
+  }, []);
   
   const [batchTasks, setBatchTasks] = useState<BatchTask[]>(() => {
     try {
@@ -97,6 +122,8 @@ export default function App() {
         currentProduct={currentProduct}
         onOpenProductModal={() => setIsProductModalOpen(true)}
         batchCount={batchTasks.length}
+        modelReady={modelReady}
+        onRequireModel={() => setModelConfigRequest(value => value + 1)}
       />
 
       {/* Main Workspace View Switcher */}
@@ -108,6 +135,10 @@ export default function App() {
             onSyncToDetail={() => setActiveTab('detail')}
             onOpenProductModal={() => setIsProductModalOpen(true)}
             onUpdateProduct={(updated) => setCurrentProduct(updated)}
+            modelRequired={healthResolved && modelRequired}
+            serverModelReady={serverModelReady}
+            onModelStatusChange={setModelReady}
+            modelConfigRequest={modelConfigRequest}
           />
         )}
 

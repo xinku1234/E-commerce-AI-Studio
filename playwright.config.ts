@@ -12,8 +12,8 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev',
     url: 'http://127.0.0.1:3230/api/health',
-    reuseExistingServer: true,
+    reuseExistingServer: false,
     timeout: 30_000,
-    env: { PORT: '3230' }
+    env: { PORT: '3230', REQUIRE_MODEL: 'false', DISABLE_HMR: 'true' }
   }
 });

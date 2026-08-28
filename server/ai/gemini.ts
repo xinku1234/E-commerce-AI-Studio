@@ -20,8 +20,10 @@ export function getGeminiClient(): GoogleGenAI | null {
 
 export function getAiCapabilities() {
   const geminiConfigured = Boolean(process.env.GEMINI_API_KEY?.trim());
+  const modelRequired = process.env.REQUIRE_MODEL !== 'false';
   return {
-    mode: geminiConfigured ? 'ai-enabled' : 'fallback',
+    mode: geminiConfigured ? 'ai-enabled' : (modelRequired ? 'model-required' : 'fallback'),
+    modelRequired,
     providers: {
       gemini: {
         configured: geminiConfigured,

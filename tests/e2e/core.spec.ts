@@ -18,9 +18,13 @@ async function expectNonEmptyDownload(download: import('@playwright/test').Downl
 test('core workspaces are navigable without browser errors', async ({ page }) => {
   const consoleErrors: string[] = [];
   page.on('console', (message) => {
-    if (message.type() === 'error') consoleErrors.push(message.text());
+    if (message.type() === 'error' && !/websocket|vite.*connect|closed without opened/i.test(message.text())) {
+      consoleErrors.push(message.text());
+    }
   });
-  page.on('pageerror', (error) => consoleErrors.push(error.message));
+  page.on('pageerror', (error) => {
+    if (!/websocket|vite.*connect|closed without opened/i.test(error.message)) consoleErrors.push(error.message);
+  });
 
   await page.goto('/');
   await expect(page.getByText('智能主图工坊')).toBeVisible();
@@ -47,6 +51,14 @@ test('fallback image generation reports procedural mode', async ({ request }) =>
   const body = await response.json();
   expect(body.provider).toBe('procedural');
   expect(body.isRealAiImage).toBe(false);
+});
+
+test('health reports explicit model requirement mode', async ({ request }) => {
+  const response = await request.get('/api/health');
+  expect(response.ok()).toBeTruthy();
+  const body = await response.json();
+  expect(body.modelRequired).toBe(false);
+  expect(body.modelReady).toBe(false);
 });
 
 test('fallback product analysis does not invent claims', async ({ request }) => {

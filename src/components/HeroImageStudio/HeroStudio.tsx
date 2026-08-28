@@ -69,6 +69,10 @@ interface HeroStudioProps {
   onSyncToDetail: () => void;
   onOpenProductModal?: () => void;
   onUpdateProduct?: (product: ProductItem) => void;
+  modelRequired?: boolean;
+  serverModelReady?: boolean;
+  onModelStatusChange?: (ready: boolean) => void;
+  modelConfigRequest?: number;
 }
 
 export const HeroStudio: React.FC<HeroStudioProps> = ({
@@ -77,6 +81,10 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
   onSyncToDetail,
   onOpenProductModal,
   onUpdateProduct
+  , modelRequired = true
+  , serverModelReady = false
+  , onModelStatusChange
+  , modelConfigRequest = 0
 }) => {
   // Multi-angle Real Product Photos State
   const [activePhotoIndex, setActivePhotoIndex] = useState<number>(0);
@@ -225,6 +233,23 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
   const [isModelModalOpen, setIsModelModalOpen] = useState<boolean>(false);
   const [aiCompositeMode, setAiCompositeMode] = useState<'ai_full_render' | 'ai_stage_overlay'>('ai_full_render');
   const [isRealAiGenerated, setIsRealAiGenerated] = useState<boolean>(false);
+
+  const promptModelReady = selectedPromptModel !== 'custom-prompt-model'
+    ? serverModelReady
+    : customPromptConfig.testStatus === 'success';
+  const imageModelReady = selectedImageModel !== 'custom-image-engine'
+    ? serverModelReady
+    : customImageConfig.testStatus === 'success';
+  const modelReady = !modelRequired || (promptModelReady && imageModelReady);
+
+  useEffect(() => {
+    onModelStatusChange?.(modelReady);
+    if (modelRequired && !modelReady) setIsModelModalOpen(true);
+  }, [modelReady, modelRequired, onModelStatusChange]);
+
+  useEffect(() => {
+    if (modelConfigRequest > 0) setIsModelModalOpen(true);
+  }, [modelConfigRequest]);
 
   // 5-Hero-Suite Matrix State (Slot 1 CTR, Slot 2 Detail, Slot 3 Dimension, Slot 4 Scene, Slot 5 WhiteBg)
   const [heroSuite, setHeroSuite] = useState<HeroSuiteItem[]>(() => {
@@ -1781,6 +1806,16 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      {modelRequired && !modelReady && (
+        <div className="fixed inset-0 z-40 bg-slate-950/95 backdrop-blur-sm flex items-center justify-center p-6">
+          <div className="w-full max-w-lg rounded-2xl border border-amber-500/40 bg-slate-900 p-6 text-center shadow-2xl">
+            <Cpu className="mx-auto mb-3 h-10 w-10 text-amber-400" />
+            <h2 className="text-lg font-bold text-white">请先绑定可用模型</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-400">当前未检测到 Gemini API Key，且自定义模型端点尚未测试通过。绑定并测试提示词模型与生图模型后，才能使用工作区。</p>
+            <button type="button" onClick={() => setIsModelModalOpen(true)} className="mt-5 rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-bold text-slate-950 hover:bg-amber-400">打开模型配置</button>
+          </div>
+        </div>
+      )}
       {/* 1. Real Photo Base & Dual-AI Model Hub Bar */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-3.5">
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">

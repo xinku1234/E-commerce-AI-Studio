@@ -16,6 +16,8 @@ interface NavbarProps {
   currentProduct: ProductItem;
   onOpenProductModal: () => void;
   batchCount: number;
+  modelReady?: boolean;
+  onRequireModel?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -24,6 +26,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentProduct,
   onOpenProductModal,
   batchCount
+  , modelReady = true
+  , onRequireModel
 }) => {
   const tabs = [
     { id: 'hero' as const, label: '主图', icon: ImageIcon },
@@ -59,7 +63,8 @@ export const Navbar: React.FC<NavbarProps> = ({
         <nav className="hidden md:flex items-center gap-1 bg-slate-800/80 p-1.5 rounded-xl border border-slate-700/60 shadow-inner">
           <button
             id="nav-hero-tab"
-            onClick={() => setActiveTab('hero')}
+            onClick={() => modelReady ? setActiveTab('hero') : onRequireModel?.()}
+            disabled={!modelReady}
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
               activeTab === 'hero'
                 ? 'bg-gradient-to-r from-rose-600 to-orange-500 text-white shadow-md'
@@ -72,7 +77,8 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           <button
             id="nav-detail-tab"
-            onClick={() => setActiveTab('detail')}
+            onClick={() => modelReady ? setActiveTab('detail') : onRequireModel?.()}
+            disabled={!modelReady}
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
               activeTab === 'detail'
                 ? 'bg-gradient-to-r from-rose-600 to-orange-500 text-white shadow-md'
@@ -85,7 +91,8 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           <button
             id="nav-batch-tab"
-            onClick={() => setActiveTab('batch')}
+            onClick={() => modelReady ? setActiveTab('batch') : onRequireModel?.()}
+            disabled={!modelReady}
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all relative ${
               activeTab === 'batch'
                 ? 'bg-gradient-to-r from-rose-600 to-orange-500 text-white shadow-md'
@@ -103,7 +110,8 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           <button
             id="nav-publish-tab"
-            onClick={() => setActiveTab('publish')}
+            onClick={() => modelReady ? setActiveTab('publish') : onRequireModel?.()}
+            disabled={!modelReady}
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
               activeTab === 'publish'
                 ? 'bg-gradient-to-r from-rose-600 to-orange-500 text-white shadow-md'

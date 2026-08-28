@@ -78,6 +78,8 @@ PORT=3000
 
 `GEMINI_API_KEY` 可以留空，此时应用仍可启动，但 AI 接口会返回演示或 fallback 结果。不要将真实 `.env` 提交到 Git。
 
+正常使用建议保持 `REQUIRE_MODEL=true`（默认值）。此模式下未配置 Gemini，或未测试通过自定义模型端点时，生成工作区会锁定，生成 API 返回 `503 MODEL_REQUIRED`，不会静默使用本地 fallback。只有演示、自动化测试或离线体验时，才建议设置 `REQUIRE_MODEL=false`。
+
 ### 3. 启动开发环境
 
 ```bash
@@ -169,6 +171,7 @@ npm start
 - 生产环境已默认拦截常见本机/内网地址；如确需访问受信任的内网服务，需显式设置 `ALLOW_PRIVATE_ENDPOINTS=true`，并自行承担风险。
 - 需要补充登录鉴权、限流、审计日志、文件类型校验和任务队列。
 - 模型可用性取决于供应商、区域、账号权限和当前 API 版本。
+- `REQUIRE_MODEL=true` 时，服务启动后会强制要求可用模型；健康检查中的 `modelRequired` 与 `modelReady` 可用于部署探针。
 - AI 输出及合规建议需要人工复核。
 - 无模型或模型失败时，详情页安全模板不会虚构认证、性能、奖项或售后承诺；缺失内容会标记为待商家补充。
 - API 响应包含 `X-Request-Id`，服务端记录结构化请求日志，便于定位失败请求。
