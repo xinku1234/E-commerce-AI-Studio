@@ -9,6 +9,7 @@ import { buildFallbackDetailModules } from "./server/ai/detailFallback";
 import { apiNotFound, errorHandler, requestContext } from "./server/http";
 import { simulateChannelPublish } from "./server/publishSimulation";
 import { validateRequestUrl } from "./server/security";
+import { hasVerifiedEndpoint, isEndpointVerified, markEndpointVerified } from "./server/ai/verifiedEndpoints";
 
 dotenv.config();
 
@@ -22,10 +23,9 @@ app.use(requestContext);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
-function requireConfiguredModel(customEndpointUrl?: unknown, customModelVerified?: unknown) {
+function requireConfiguredModel(customEndpointUrl?: unknown) {
   const ai = getAiCapabilities();
-  const customReady = typeof customEndpointUrl === 'string' && customEndpointUrl.trim() && customModelVerified === true;
-  if (!ai.modelRequired || ai.providers.gemini.configured || customReady) return null;
+  if (!ai.modelRequired || ai.providers.gemini.configured || isEndpointVerified(customEndpointUrl)) return null;
   return { success: false, error: "未绑定可用模型，请先配置 GEMINI_API_KEY 或测试通过自定义模型端点。", code: "MODEL_REQUIRED" };
 }
 
@@ -37,7 +37,7 @@ app.get("/api/health", (_req, res) => {
     mode: ai.mode,
     ai: ai.providers,
     modelRequired: ai.modelRequired,
-    modelReady: ai.providers.gemini.configured,
+    modelReady: ai.providers.gemini.configured || hasVerifiedEndpoint(),
     publishMode: "simulation",
     timestamp: new Date().toISOString()
   });
@@ -64,6 +64,9 @@ app.post("/api/test-custom-endpoint", async (req, res) => {
     }
     let modelsList: string[] = [];
     let detectedService = "OpenAI Compatible";
+    let reachable = false;
+    let authRejected = false;
+    let authRejectedStatus = 0;
 
     // 1. Try standard OpenAI / compatible /v1/models endpoint
     let targetModelsUrl = cleanUrl;
@@ -94,7 +97,13 @@ app.post("/api/test-custom-endpoint", async (req, res) => {
       return null;
     });
 
+    if (fetchResponse && (fetchResponse.status === 401 || fetchResponse.status === 403)) {
+      authRejected = true;
+      authRejectedStatus = fetchResponse.status;
+    }
+
     if (fetchResponse && fetchResponse.ok) {
+      reachable = true;
       const data = await fetchResponse.json().catch(() => null);
       if (data) {
         if (Array.isArray(data.data)) {
@@ -125,7 +134,12 @@ app.post("/api/test-custom-endpoint", async (req, res) => {
           headers,
           signal: AbortSignal.timeout(5000)
         });
-        if (pingRes.ok || pingRes.status === 404 || pingRes.status === 401 || pingRes.status === 405) {
+        if (pingRes.status === 401 || pingRes.status === 403) {
+          authRejected = true;
+          authRejectedStatus = pingRes.status;
+        }
+        if (pingRes.ok || pingRes.status === 404 || pingRes.status === 405) {
+          reachable = true;
           // Endpoint is reachable! Provide sensible standard defaults for this provider
           if (cleanUrl.includes("deepseek")) {
             modelsList = ["deepseek-chat", "deepseek-reasoner", "deepseek-r1", "deepseek-v3"];
@@ -160,12 +174,31 @@ app.post("/api/test-custom-endpoint", async (req, res) => {
 
     const latencyMs = Date.now() - startTime;
 
+    if (authRejected) {
+      return res.status(401).json({
+        success: false,
+        latencyMs,
+        message: `端点可达但拒绝授权 (HTTP ${authRejectedStatus})，请检查 API Key 是否正确、是否有该模型权限`
+      });
+    }
+
+    if (!reachable) {
+      return res.status(502).json({
+        success: false,
+        latencyMs,
+        message: `无法连接到该端点 (${latencyMs}ms)，请检查 URL、网络连通性与服务是否已启动`
+      });
+    }
+
+    markEndpointVerified(cleanUrl);
+
     if (modelsList.length > 0) {
       return res.json({
         success: true,
         latencyMs,
         models: Array.from(new Set(modelsList)),
         serviceName: detectedService,
+        verified: true,
         message: `连接成功！响应耗时 ${latencyMs}ms，成功发现 ${modelsList.length} 个可用模型`
       });
     }
@@ -173,8 +206,9 @@ app.post("/api/test-custom-endpoint", async (req, res) => {
     return res.json({
       success: true,
       latencyMs,
-      models: ["default-custom-model"],
-      message: `端点可连通 (${latencyMs}ms)，未能自动枚举模型，您可直接在下方「自填模型名称」使用`
+      models: [],
+      verified: true,
+      message: `端点已连通 (${latencyMs}ms)，但未能自动枚举模型，请在下方手动填写模型名称`
     });
   } catch (error: any) {
     const latencyMs = Date.now() - startTime;
@@ -450,6 +484,9 @@ app.post("/api/ai-analyze-product", async (req, res) => {
     customApiKey
   } = req.body;
 
+  const modelError = requireConfiguredModel(customEndpointUrl);
+  if (modelError) return res.status(503).json(modelError);
+
   const fallbackData = buildSafeProductGuidance(
     productName || "智能高品质商品", 
     category || "3C数码 / 生活美学", 
@@ -661,6 +698,9 @@ app.post("/api/generate-multimodal-platform-prompt", async (req, res) => {
     customEndpointUrl,
     customApiKey
   } = req.body;
+
+  const modelError = requireConfiguredModel(customEndpointUrl);
+  if (modelError) return res.status(503).json(modelError);
 
   try {
     const resolvedImageParts = await resolveImageParts(images, imageBase64);
@@ -917,8 +957,14 @@ ${hasImages ? `【核心指令：已输入 ${resolvedImageParts.length} 张商�
 // 3. AI Detail Page Modules Generator
 app.post("/api/generate-detail-page-modules", async (req, res) => {
   const { productName, category, targetPlatform, sellingPoints, customSpecs } = req.body || {};
-  const modelError = requireConfiguredModel(req.body?.customEndpointUrl, req.body?.customModelVerified);
-  if (modelError) return res.status(503).json(modelError);
+  const capabilities = getAiCapabilities();
+  if (capabilities.modelRequired && !capabilities.providers.gemini.configured) {
+    return res.status(503).json({
+      success: false,
+      error: "详情页文案生成当前依赖 Gemini，请先配置 GEMINI_API_KEY 后再使用。",
+      code: "MODEL_REQUIRED"
+    });
+  }
   const fallbackModules = buildFallbackDetailModules({ productName, category, sellingPoints, customSpecs });
   try {
     const ai = getGeminiClient();
@@ -975,10 +1021,9 @@ app.post("/api/generate-product-image", async (req, res) => {
       imageModel = "gemini-3.1-flash-image",
       customEndpointUrl,
       customApiKey,
-      customModelVerified,
       denoisingStrength = 0.65
     } = req.body;
-    const modelError = requireConfiguredModel(customEndpointUrl, customModelVerified);
+    const modelError = requireConfiguredModel(customEndpointUrl);
     if (modelError) return res.status(503).json(modelError);
 
     const resolvedImageParts = await resolveImageParts(images, imageBase64);
@@ -1030,6 +1075,9 @@ app.post("/api/generate-hero-suite-5", async (req, res) => {
       customEndpointUrl,
       customApiKey
     } = req.body;
+
+    const modelError = requireConfiguredModel(customEndpointUrl);
+    if (modelError) return res.status(503).json(modelError);
 
     const is1688 = targetPlatform === "1688";
     const isAmazon = targetPlatform === "amazon";

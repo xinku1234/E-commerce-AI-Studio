@@ -78,7 +78,11 @@ PORT=3000
 
 `GEMINI_API_KEY` 可以留空，此时应用仍可启动，但 AI 接口会返回演示或 fallback 结果。不要将真实 `.env` 提交到 Git。
 
-正常使用建议保持 `REQUIRE_MODEL=true`（默认值）。此模式下未配置 Gemini，或未测试通过自定义模型端点时，生成工作区会锁定，生成 API 返回 `503 MODEL_REQUIRED`，不会静默使用本地 fallback。只有演示、自动化测试或离线体验时，才建议设置 `REQUIRE_MODEL=false`。
+正常使用建议保持 `REQUIRE_MODEL=true`（默认值）。此模式下只有两种情况算“已绑定模型”：一是服务端配置了 `GEMINI_API_KEY`；二是在「模型配置」中选择自定义端点，并通过「测试连接」由服务端实际验证成功。
+
+未绑定模型时，工作区锁定、导航按钮禁用、模型配置弹窗的保存按钮禁用，并且 `/api/ai-analyze-product`、`/api/generate-multimodal-platform-prompt`、`/api/generate-product-image`、`/api/generate-hero-suite-5`、`/api/generate-detail-page-modules` 全部返回 `503 MODEL_REQUIRED`，不会静默使用本地 fallback。
+
+服务端只信任本进程内验证通过的端点，验证有效期 6 小时；重启服务或超时后需要重新测试连接。仅填写 URL 而未测试成功不会解锁生成。只有演示、自动化测试或离线体验时，才建议设置 `REQUIRE_MODEL=false`。
 
 ### 3. 启动开发环境
 

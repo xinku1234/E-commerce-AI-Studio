@@ -1304,12 +1304,20 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
           imageBase64: optimizedImage,
           analysisModel: effectiveModelName,
           customEndpointUrl: selectedPromptModel === 'custom-prompt-model' ? customPromptConfig.endpointUrl : undefined,
-          customApiKey: selectedPromptModel === 'custom-prompt-model' ? customPromptConfig.apiKey : undefined,
-          customModelVerified: selectedPromptModel === 'custom-prompt-model' && customPromptConfig.testStatus === 'success'
+          customApiKey: selectedPromptModel === 'custom-prompt-model' ? customPromptConfig.apiKey : undefined
         })
       }, 25000);
 
       const result = res.data;
+      if (result?.code === 'MODEL_REQUIRED') {
+        setFeedbackBanner({
+          text: result.error || '未绑定可用模型，请先在模型配置中完成绑定与连接测试。',
+          type: 'error'
+        });
+        setIsModelModalOpen(true);
+        onModelStatusChange?.(false);
+        return;
+      }
       if (result && result.success && result.data) {
         setAiSuggestions(result.data);
         
@@ -1382,6 +1390,8 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
         body: JSON.stringify({ ...payload, prompt: retryPrompt })
       }, timeoutMs);
       lastData = res.data || {};
+      // A model gate rejection is deterministic; retrying cannot help.
+      if (lastData.code === 'MODEL_REQUIRED') return { data: lastData, attempts: attempt };
       if (res.ok && lastData.imageUrl) return { data: lastData, attempts: attempt };
     }
     return { data: lastData, attempts: maxAttempts };
@@ -1407,10 +1417,19 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
           imageModel: effectiveImageModelName,
           customEndpointUrl: selectedImageModel === 'custom-image-engine' ? customImageConfig.endpointUrl : undefined,
           customApiKey: selectedImageModel === 'custom-image-engine' ? customImageConfig.apiKey : undefined,
-          customModelVerified: selectedImageModel === 'custom-image-engine' && customImageConfig.testStatus === 'success',
           denoisingStrength
       };
       let generation = await requestProductImageWithRetry(generationPayload, 25000);
+
+      if (generation.data?.code === 'MODEL_REQUIRED') {
+        setFeedbackBanner({
+          text: generation.data.error || '未绑定可用模型，请先在模型配置中完成绑定与连接测试。',
+          type: 'error'
+        });
+        setIsModelModalOpen(true);
+        onModelStatusChange?.(false);
+        return;
+      }
 
       let data = generation.data;
       let finalImageUrl = data.imageUrl;
@@ -1651,11 +1670,21 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
               imageModel: effectiveImageModelName,
               customEndpointUrl: selectedImageModel === 'custom-image-engine' ? customImageConfig.endpointUrl : undefined,
               customApiKey: selectedImageModel === 'custom-image-engine' ? customImageConfig.apiKey : undefined,
-              customModelVerified: selectedImageModel === 'custom-image-engine' && customImageConfig.testStatus === 'success',
               denoisingStrength
           }, 18000);
 
           const data = generation.data;
+          if (data?.code === 'MODEL_REQUIRED') {
+            setFeedbackBanner({
+              text: data.error || '未绑定可用模型，请先在模型配置中完成绑定与连接测试。',
+              type: 'error'
+            });
+            setIsModelModalOpen(true);
+            onModelStatusChange?.(false);
+            setGeneratingSlotIndex(0);
+            setIsGeneratingSuite(false);
+            return;
+          }
           slotBgImg = data.imageUrl;
           updatedSuite[i] = { ...updatedSuite[i], retryCount: Math.max(0, generation.attempts - 1) };
           if (!slotBgImg) fallbackCount++;
@@ -3056,6 +3085,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
         setCustomImageConfig={setCustomImageConfig}
         denoisingStrength={denoisingStrength}
         setDenoisingStrength={setDenoisingStrength}
+        serverModelReady={serverModelReady}
       />
 
       {/* Pre-processing Image Quality Validation Modal */}

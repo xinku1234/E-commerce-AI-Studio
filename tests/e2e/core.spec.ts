@@ -118,7 +118,7 @@ test('batch export ZIP contains generated PNG and metadata', async ({ page }) =>
   await page.goto('/');
   await page.getByRole('button', { name: /批量矩阵生成/ }).click();
   await page.locator('#btn-create-batch-matrix').click();
-  await expect(page.getByText('已完成')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText('已完成').first()).toBeVisible({ timeout: 30_000 });
 
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: /打包下载全部物料/ }).click();
@@ -187,4 +187,25 @@ test('detail exports produce non-empty PNG and ZIP assets', async ({ page }) => 
   const pngEntries = entries.filter(entry => entry.name.endsWith('.png'));
   expect(pngEntries.length).toBeGreaterThan(1);
   expect((await pngEntries[0].async('uint8array')).byteLength).toBeGreaterThan(100);
+});
+
+test('locks the workspace until a model is bound', async ({ page }) => {
+  await page.route('**/api/health', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        status: 'ok',
+        mode: 'model-required',
+        ai: { gemini: { configured: false }, proceduralFallback: { configured: true } },
+        modelRequired: true,
+        modelReady: false,
+        publishMode: 'simulation'
+      })
+    });
+  });
+
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: '请先绑定可用模型' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '请先完成模型绑定' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: /详情页长图工坊/ })).toBeDisabled();
 });

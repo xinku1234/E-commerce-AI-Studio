@@ -95,6 +95,9 @@ export const BatchStudio: React.FC<BatchStudioProps> = ({
             })
           }, 25000);
           const data = response.data || {};
+          if (data.code === 'MODEL_REQUIRED') {
+            throw new Error(data.error || '未绑定可用模型，请先在主图工作台完成模型绑定与连接测试。');
+          }
           updated[i] = { ...updated[i], progress: 65 };
           onUpdateTasks([...updated]);
 

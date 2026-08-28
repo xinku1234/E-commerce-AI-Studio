@@ -45,7 +45,9 @@ export default function App() {
       .then(response => response.json())
       .then(data => {
         setModelRequired(data.modelRequired !== false);
-        setServerModelReady(Boolean(data.modelReady));
+        // Only a configured server-side Gemini key unlocks the built-in presets;
+        // custom endpoints unlock separately after their own connection test.
+        setServerModelReady(Boolean(data.ai?.gemini?.configured));
         if (data.modelRequired !== false && !data.modelReady) setModelReady(false);
       })
       .catch(() => {

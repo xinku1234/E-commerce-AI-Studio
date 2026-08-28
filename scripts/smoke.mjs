@@ -70,6 +70,39 @@ try {
     });
     const strictGenerateJson = await strictGenerate.json();
     if (strictGenerate.status !== 503 || strictGenerateJson.code !== 'MODEL_REQUIRED') throw new Error('strict model gate failed');
+
+    // An unverified custom endpoint must not unlock generation.
+    const spoofed = await fetch(`http://127.0.0.1:${strictPort}/api/generate-product-image`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'test', customEndpointUrl: 'https://not-tested.example.com/v1' })
+    });
+    const spoofedJson = await spoofed.json();
+    if (spoofed.status !== 503 || spoofedJson.code !== 'MODEL_REQUIRED') throw new Error('untested endpoint bypassed the model gate');
+
+    // Analysis, prompt, suite and detail routes must be gated too.
+    for (const route of [
+      '/api/ai-analyze-product',
+      '/api/generate-multimodal-platform-prompt',
+      '/api/generate-hero-suite-5',
+      '/api/generate-detail-page-modules'
+    ]) {
+      const gated = await fetch(`http://127.0.0.1:${strictPort}${route}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ productName: 'test' })
+      });
+      const gatedJson = await gated.json();
+      if (gated.status !== 503 || gatedJson.code !== 'MODEL_REQUIRED') throw new Error(`route not gated: ${route}`);
+    }
+
+    // A failed connection test must not mark the endpoint as usable.
+    const testRes = await fetch(`http://127.0.0.1:${strictPort}/api/test-custom-endpoint`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ endpointUrl: 'https://127.0.0.1:59999/v1' })
+    });
+    if (testRes.status === 200) throw new Error(`unreachable endpoint reported as connected`);
   } finally {
     strictChild.kill();
   }

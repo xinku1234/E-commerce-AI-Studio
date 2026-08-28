@@ -41,6 +41,7 @@ interface ModelConfigModalProps {
   setCustomImageConfig: React.Dispatch<React.SetStateAction<CustomEndpointConfig>>;
   denoisingStrength: number;
   setDenoisingStrength: (val: number) => void;
+  serverModelReady?: boolean;
 }
 
 export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
@@ -55,7 +56,8 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
   customImageConfig,
   setCustomImageConfig,
   denoisingStrength,
-  setDenoisingStrength
+  setDenoisingStrength,
+  serverModelReady = false
 }) => {
   const [activeTab, setActiveTab] = useState<'prompt' | 'image' | 'overview'>('prompt');
   const [showPromptKey, setShowPromptKey] = useState<boolean>(false);
@@ -151,6 +153,14 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
       testMessage: undefined
     }));
   };
+
+  const promptReady = selectedPromptModel === "custom-prompt-model"
+    ? customPromptConfig.testStatus === "success"
+    : serverModelReady;
+  const imageReady = selectedImageModel === "custom-image-engine"
+    ? customImageConfig.testStatus === "success"
+    : serverModelReady;
+  const bindingReady = promptReady && imageReady;
 
   const activeCustomPromptModelName = customPromptConfig.useManual 
     ? (customPromptConfig.manualModel || '未自填模型') 
@@ -945,10 +955,12 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
 
           <button
             onClick={onClose}
-            className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-gradient-to-r from-rose-500 to-indigo-600 hover:from-rose-600 hover:to-indigo-700 text-white text-xs font-bold shadow-lg shadow-rose-900/30 transition-all flex items-center justify-center gap-2"
+            disabled={!bindingReady}
+            title={bindingReady ? undefined : "请先完成模型绑定：配置服务端 GEMINI_API_KEY，或选择自定义端点并测试连接成功"}
+            className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-gradient-to-r from-rose-500 to-indigo-600 hover:from-rose-600 hover:to-indigo-700 disabled:from-slate-700 disabled:to-slate-700 disabled:cursor-not-allowed text-white text-xs font-bold shadow-lg shadow-rose-900/30 transition-all flex items-center justify-center gap-2"
           >
             <Check className="w-4 h-4" />
-            保存配置并返回工作台
+            {bindingReady ? "保存配置并返回工作台" : "请先完成模型绑定"}
           </button>
         </div>
       </div>
