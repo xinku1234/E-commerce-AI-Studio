@@ -59,6 +59,11 @@ import { analyzeImageQuality, validateEcommerceOutput } from '../../utils/imageQ
 import { smartRemoveBackground, optimizeImageForUpload } from '../../utils/imageMatting';
 import { synthesizeCommercialStudioScene, renderCompleteHeroSlotImage } from '../../utils/sceneSynthesizer';
 import { safeFetchJson } from '../../utils/apiUtils';
+import {
+  DEFAULT_IMAGE_ENDPOINT_CONFIG,
+  DEFAULT_PROMPT_ENDPOINT_CONFIG,
+  readStoredEndpointConfig
+} from '../../utils/modelConfig';
 import { ModelConfigModal } from './ModelConfigModal';
 import { HeroSuiteMatrixBar } from './HeroSuiteMatrixBar';
 import { ImageQualityModal } from './ImageQualityModal';
@@ -197,37 +202,13 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
     return localStorage.getItem('SELECTED_IMAGE_MODEL') || 'gemini-3.1-flash-image';
   });
 
-  const [customPromptConfig, setCustomPromptConfig] = useState<CustomEndpointConfig>(() => {
-    const saved = localStorage.getItem('CUSTOM_PROMPT_CONFIG');
-    if (saved) {
-      try { return { ...JSON.parse(saved), apiKey: '' }; } catch (e) {}
-    }
-    return {
-      endpointUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-      apiKey: '',
-      selectedModel: 'qwen-vl-max',
-      manualModel: 'qwen-vl-max',
-      useManual: false,
-      fetchedModels: ['qwen-vl-max', 'qwen-vl-plus', 'deepseek-chat', 'gpt-4o', 'claude-3-5-sonnet'],
-      testStatus: 'idle'
-    };
-  });
+  const [customPromptConfig, setCustomPromptConfig] = useState<CustomEndpointConfig>(
+    () => readStoredEndpointConfig('CUSTOM_PROMPT_CONFIG', DEFAULT_PROMPT_ENDPOINT_CONFIG)
+  );
 
-  const [customImageConfig, setCustomImageConfig] = useState<CustomEndpointConfig>(() => {
-    const saved = localStorage.getItem('CUSTOM_IMAGE_CONFIG');
-    if (saved) {
-      try { return { ...JSON.parse(saved), apiKey: '' }; } catch (e) {}
-    }
-    return {
-      endpointUrl: 'https://api.siliconflow.cn/v1',
-      apiKey: '',
-      selectedModel: 'black-forest-labs/FLUX.1-schnell',
-      manualModel: 'black-forest-labs/FLUX.1-schnell',
-      useManual: false,
-      fetchedModels: ['black-forest-labs/FLUX.1-schnell', 'stabilityai/stable-diffusion-3-5-large', 'dall-e-3'],
-      testStatus: 'idle'
-    };
-  });
+  const [customImageConfig, setCustomImageConfig] = useState<CustomEndpointConfig>(
+    () => readStoredEndpointConfig('CUSTOM_IMAGE_CONFIG', DEFAULT_IMAGE_ENDPOINT_CONFIG)
+  );
 
   const [denoisingStrength, setDenoisingStrength] = useState<number>(0.65);
   const [isModelModalOpen, setIsModelModalOpen] = useState<boolean>(false);
@@ -277,22 +258,6 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
     const { apiKey: _apiKey, ...safeConfig } = customImageConfig;
     localStorage.setItem('CUSTOM_IMAGE_CONFIG', JSON.stringify(safeConfig));
   }, [customImageConfig]);
-
-  useEffect(() => {
-    // Remove API keys written by versions prior to the in-memory-only policy.
-    for (const key of ['CUSTOM_PROMPT_CONFIG', 'CUSTOM_IMAGE_CONFIG']) {
-      const saved = localStorage.getItem(key);
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          if ('apiKey' in parsed) {
-            delete parsed.apiKey;
-            localStorage.setItem(key, JSON.stringify(parsed));
-          }
-        } catch { /* ignore malformed legacy data */ }
-      }
-    }
-  }, []);
 
   // Analysis and Generation States
   const [isAnalyzingProduct, setIsAnalyzingProduct] = useState<boolean>(false);

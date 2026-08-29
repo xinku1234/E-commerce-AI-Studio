@@ -122,6 +122,8 @@ npm start
 - API Key 仅在当前页面会话中使用，不会保存到浏览器 `localStorage`。
 - 生产环境默认拒绝访问本机和内网 Endpoint；本地开发连接 Ollama 等服务时可使用开发模式。
 - 仍不建议在公共电脑输入生产 API Key。
+- 浏览器只持久化端点地址与模型名；刷新后连接状态会重置为未验证，需要重新点击测试连接。
+- 旧版本或被手工改坏的本地配置会在读取时自动归一化，避免打开模型配置弹窗时崩溃。
 
 ## API 概览
 
@@ -145,7 +147,8 @@ npm start
 │   │   ├── HeroImageStudio/
 │   │   ├── DetailPageStudio/
 │   │   ├── BatchGenerator/
-│   │   └── PublishHub/
+│   │   ├── PublishHub/
+│   │   └── ErrorBoundary.tsx
 │   ├── data/
 │   ├── utils/
 │   ├── App.tsx

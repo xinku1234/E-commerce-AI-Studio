@@ -70,7 +70,7 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
     const config = type === 'prompt' ? customPromptConfig : customImageConfig;
     const setConfig = type === 'prompt' ? setCustomPromptConfig : setCustomImageConfig;
 
-    if (!config.endpointUrl || !config.endpointUrl.trim()) {
+    if (typeof config.endpointUrl !== 'string' || !config.endpointUrl.trim()) {
       setConfig(prev => ({
         ...prev,
         testStatus: 'failed',
@@ -91,7 +91,7 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           endpointUrl: config.endpointUrl,
-          apiKey: config.apiKey,
+          apiKey: config.apiKey ?? '',
           endpointType: 'openai_compatible'
         })
       }, 15000);
@@ -99,7 +99,9 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
       const data = res.data;
       if (data && data.success) {
         setConfig(prev => {
-          const models: string[] = data.models || [];
+          const models: string[] = Array.isArray(data.models)
+            ? data.models.filter((item: unknown): item is string => typeof item === 'string')
+            : [];
           const currentSelected = prev.selectedModel;
           const nextSelected = models.includes(currentSelected) 
             ? currentSelected 
@@ -153,6 +155,10 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
       testMessage: undefined
     }));
   };
+
+  // Props may originate from persisted data, so never trust the array shape.
+  const promptModels = Array.isArray(customPromptConfig.fetchedModels) ? customPromptConfig.fetchedModels : [];
+  const imageModels = Array.isArray(customImageConfig.fetchedModels) ? customImageConfig.fetchedModels : [];
 
   const promptReady = selectedPromptModel === "custom-prompt-model"
     ? customPromptConfig.testStatus === "success"
@@ -381,7 +387,7 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
                     </label>
                     <input
                       type="text"
-                      value={customPromptConfig.endpointUrl}
+                      value={customPromptConfig.endpointUrl ?? ""}
                       onChange={(e) => setCustomPromptConfig(prev => ({ ...prev, endpointUrl: e.target.value, testStatus: 'idle' }))}
                       placeholder="https://api.openai.com/v1 或 https://dashscope.aliyuncs.com/compatible-mode/v1"
                       className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 font-mono"
@@ -396,7 +402,7 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
                     <div className="relative">
                       <input
                         type={showPromptKey ? "text" : "password"}
-                        value={customPromptConfig.apiKey}
+                        value={customPromptConfig.apiKey ?? ""}
                         onChange={(e) => setCustomPromptConfig(prev => ({ ...prev, apiKey: e.target.value, testStatus: 'idle' }))}
                         placeholder="sk-..."
                         className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 pr-9 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 font-mono"
@@ -472,7 +478,7 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
                             : 'text-slate-400 hover:text-slate-200'
                         }`}
                       >
-                        从拉取列表中选择 ({customPromptConfig.fetchedModels.length || 0})
+                        从拉取列表中选择 ({promptModels.length})
                       </button>
                       <button
                         onClick={() => setCustomPromptConfig(prev => ({ ...prev, useManual: true }))}
@@ -493,13 +499,13 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
                       <label className="text-[11px] text-slate-300 block">
                         选择拉取到的可用模型:
                       </label>
-                      {customPromptConfig.fetchedModels.length > 0 ? (
+                      {promptModels.length > 0 ? (
                         <select
-                          value={customPromptConfig.selectedModel}
+                          value={promptModels.includes(customPromptConfig.selectedModel) ? customPromptConfig.selectedModel : promptModels[0]}
                           onChange={(e) => setCustomPromptConfig(prev => ({ ...prev, selectedModel: e.target.value }))}
                           className="w-full bg-slate-950 border border-purple-500/50 rounded-lg px-3 py-2 text-xs text-purple-200 font-bold focus:outline-none focus:border-purple-400 cursor-pointer"
                         >
-                          {customPromptConfig.fetchedModels.map((m, idx) => (
+                          {promptModels.map((m, idx) => (
                             <option key={idx} value={m} className="bg-slate-900 text-white">
                               {m}
                             </option>
@@ -526,7 +532,7 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
                       </label>
                       <input
                         type="text"
-                        value={customPromptConfig.manualModel}
+                        value={customPromptConfig.manualModel ?? ""}
                         onChange={(e) => setCustomPromptConfig(prev => ({ ...prev, manualModel: e.target.value }))}
                         placeholder="例如: qwen-vl-max / deepseek-chat / ft:gpt-4o:my-org:custom-01"
                         className="w-full bg-slate-950 border border-purple-500/50 rounded-lg px-3 py-2 text-xs text-white font-mono placeholder-slate-500 focus:outline-none focus:border-purple-400"
@@ -700,7 +706,7 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
                     </label>
                     <input
                       type="text"
-                      value={customImageConfig.endpointUrl}
+                      value={customImageConfig.endpointUrl ?? ""}
                       onChange={(e) => setCustomImageConfig(prev => ({ ...prev, endpointUrl: e.target.value, testStatus: 'idle' }))}
                       placeholder="https://api.siliconflow.cn/v1 或 http://127.0.0.1:8188"
                       className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
@@ -715,7 +721,7 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
                     <div className="relative">
                       <input
                         type={showImageKey ? "text" : "password"}
-                        value={customImageConfig.apiKey}
+                        value={customImageConfig.apiKey ?? ""}
                         onChange={(e) => setCustomImageConfig(prev => ({ ...prev, apiKey: e.target.value, testStatus: 'idle' }))}
                         placeholder="sk-... (本地 ComfyUI/SD 可留空)"
                         className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 pr-9 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
@@ -791,7 +797,7 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
                             : 'text-slate-400 hover:text-slate-200'
                         }`}
                       >
-                        从拉取列表中选择 ({customImageConfig.fetchedModels.length || 0})
+                        从拉取列表中选择 ({imageModels.length})
                       </button>
                       <button
                         onClick={() => setCustomImageConfig(prev => ({ ...prev, useManual: true }))}
@@ -812,13 +818,13 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
                       <label className="text-[11px] text-slate-300 block">
                         选择拉取到的可用生图模型:
                       </label>
-                      {customImageConfig.fetchedModels.length > 0 ? (
+                      {imageModels.length > 0 ? (
                         <select
-                          value={customImageConfig.selectedModel}
+                          value={imageModels.includes(customImageConfig.selectedModel) ? customImageConfig.selectedModel : imageModels[0]}
                           onChange={(e) => setCustomImageConfig(prev => ({ ...prev, selectedModel: e.target.value }))}
                           className="w-full bg-slate-950 border border-emerald-500/50 rounded-lg px-3 py-2 text-xs text-emerald-200 font-bold focus:outline-none focus:border-emerald-400 cursor-pointer"
                         >
-                          {customImageConfig.fetchedModels.map((m, idx) => (
+                          {imageModels.map((m, idx) => (
                             <option key={idx} value={m} className="bg-slate-900 text-white">
                               {m}
                             </option>
@@ -845,7 +851,7 @@ export const ModelConfigModal: React.FC<ModelConfigModalProps> = ({
                       </label>
                       <input
                         type="text"
-                        value={customImageConfig.manualModel}
+                        value={customImageConfig.manualModel ?? ""}
                         onChange={(e) => setCustomImageConfig(prev => ({ ...prev, manualModel: e.target.value }))}
                         placeholder="例如: black-forest-labs/FLUX.1-schnell / sd_xl_base_1.0 / ComfyUI-Ecom"
                         className="w-full bg-slate-950 border border-emerald-500/50 rounded-lg px-3 py-2 text-xs text-white font-mono placeholder-slate-500 focus:outline-none focus:border-emerald-400"

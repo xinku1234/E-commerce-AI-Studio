@@ -209,3 +209,25 @@ test('locks the workspace until a model is bound', async ({ page }) => {
   await expect(page.getByRole('button', { name: '请先完成模型绑定' })).toBeDisabled();
   await expect(page.getByRole('button', { name: /详情页长图工坊/ })).toBeDisabled();
 });
+
+test('malformed persisted model config still renders the config modal', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => {
+    if (!/websocket|vite.*connect|closed without opened/i.test(error.message)) pageErrors.push(error.message);
+  });
+
+  await page.goto('/');
+  await page.evaluate(() => {
+    localStorage.setItem('SELECTED_PROMPT_MODEL', 'custom-prompt-model');
+    localStorage.setItem('SELECTED_IMAGE_MODEL', 'custom-image-engine');
+    // Shapes written by older builds or corrupted by hand.
+    localStorage.setItem('CUSTOM_PROMPT_CONFIG', JSON.stringify({ endpointUrl: 'http://127.0.0.1:9/v1' }));
+    localStorage.setItem('CUSTOM_IMAGE_CONFIG', JSON.stringify({ fetchedModels: 'oops', selectedModel: null }));
+  });
+  await page.reload();
+
+  await page.getByRole('button', { name: /模型与接口配置/ }).first().click();
+  await expect(page.getByRole('button', { name: /^测试连接$/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /从拉取列表中选择/ }).first()).toBeVisible();
+  expect(pageErrors).toEqual([]);
+});
