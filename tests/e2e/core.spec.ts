@@ -377,3 +377,87 @@ test('one broken workspace keeps the navigation and other workspaces usable', as
   await page.getByRole('button', { name: /批量矩阵生成/ }).click();
   await expect(page.getByText('批量多平台矩阵生成引擎')).toBeVisible();
 });
+
+test('DOM mutations from outside React cannot break rendering', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => {
+    if (!/websocket|vite.*connect|closed without opened/i.test(error.message)) pageErrors.push(error.message);
+  });
+
+  await page.goto('/');
+  await expect(page.getByText('智能主图工坊')).toBeVisible();
+
+  // The resilience layer repairs a stale insertion reference instead of throwing.
+  const insertResult = await page.evaluate(() => {
+    const parent = document.createElement('div');
+    const stranger = document.createElement('span');
+    document.body.append(parent, stranger);
+    let outcome: string;
+    try {
+      parent.insertBefore(document.createElement('i'), stranger);
+      outcome = 'repaired:' + parent.children.length;
+    } catch (error) {
+      outcome = 'threw';
+    }
+    parent.remove();
+    stranger.remove();
+    return outcome;
+  });
+  expect(insertResult).toBe('repaired:1');
+
+  const removeResult = await page.evaluate(() => {
+    const a = document.createElement('div');
+    const b = document.createElement('div');
+    document.body.append(a, b);
+    let outcome: string;
+    try {
+      a.removeChild(b);
+      outcome = 'repaired';
+    } catch (error) {
+      outcome = 'threw';
+    }
+    a.remove();
+    if (b.parentNode) b.remove();
+    return outcome;
+  });
+  expect(removeResult).toBe('repaired');
+
+  // Emulate a page translator: wrap text nodes and reparent a keyed list item,
+  // then force React to re-render the same lists.
+  await page.getByRole('button', { name: /详情页长图工坊/ }).click();
+  await expect(page.getByText('智能详情页长图工坊')).toBeVisible();
+  await page.evaluate(() => {
+    const icon = document.querySelectorAll('button svg.lucide-move-down')[1];
+    const card = icon?.closest('div.rounded-xl');
+    if (card) document.querySelector('main')?.appendChild(card);
+
+    const root = document.getElementById('root');
+    if (!root) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const texts: Text[] = [];
+    while (walker.nextNode()) {
+      const node = walker.currentNode as Text;
+      if ((node.nodeValue || '').trim().length > 1) texts.push(node);
+    }
+    for (const node of texts.slice(0, 60)) {
+      const wrapper = document.createElement('font');
+      wrapper.textContent = node.nodeValue;
+      node.parentNode?.replaceChild(wrapper, node);
+    }
+  });
+
+  const moveDown = page.locator('button:has(svg.lucide-move-down)');
+  for (let i = 0; i < 4; i += 1) {
+    await moveDown.first().click({ force: true }).catch(() => {});
+  }
+
+  await expect(page.getByText('界面渲染出错')).toHaveCount(0);
+  await expect(page.getByText('加载失败')).toHaveCount(0);
+
+  // Navigation and every other workspace still work.
+  await page.getByRole('button', { name: /批量矩阵生成/ }).click();
+  await expect(page.getByText('批量多平台矩阵生成引擎')).toBeVisible();
+  await page.getByRole('button', { name: /一键多渠道分发/ }).click();
+  await expect(page.getByText('多电商渠道发布流程预览')).toBeVisible();
+  expect(pageErrors).toEqual([]);
+});

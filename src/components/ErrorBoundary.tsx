@@ -1,4 +1,6 @@
 import { Component, Fragment, type ErrorInfo, type ReactNode } from 'react';
+import { requestAppRemount } from '../utils/appRemount';
+import { formatDiagnostics, recordRenderError, type RenderErrorDiagnostics } from '../utils/renderDiagnostics';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -12,6 +14,8 @@ interface ErrorBoundaryState {
   /** Bumped to remount the subtree after a recoverable DOM desync. */
   remountKey: number;
   recoveryAttempts: number;
+  diagnostics: RenderErrorDiagnostics | null;
+  copied: boolean;
 }
 
 // This project ships without @types/react, so `Component` resolves to `any` and
@@ -26,13 +30,13 @@ type ErrorBoundaryBase = new (props: ErrorBoundaryProps) => {
 
 const BaseComponent = Component as unknown as ErrorBoundaryBase;
 
-const MAX_AUTO_RECOVERIES = 2;
+/** After this much uninterrupted rendering, past failures stop counting. */
+const STABLE_RESET_MS = 15000;
 
 /**
  * Errors raised when the React virtual tree and the real DOM disagree. They are
  * usually caused by something outside React mutating managed nodes (translation
- * or reader browser extensions are the common source), and remounting the
- * subtree restores a consistent tree without losing the whole page.
+ * or reader browser extensions are the common source).
  */
 const DOM_DESYNC_PATTERN = /insertBefore|removeChild|appendChild|NotFoundError|is not a child of this node|不是此节点的子节点/i;
 
@@ -42,37 +46,86 @@ export function isRecoverableDomError(error: unknown): boolean {
 }
 
 /**
- * Prevents a single render-time exception (for example malformed persisted
- * config) from blanking the workspace. DOM desync errors are healed by
- * remounting the subtree; anything else surfaces a recovery card.
+ * Prevents a single render-time exception from blanking the workspace.
+ *
+ * Recovery escalates, because a DOM desync corrupts the container the subtree
+ * lives in rather than just the subtree:
+ *   1. remount the subtree with a fresh key,
+ *   2. if that fails again, rebuild the whole React root from clean markup,
+ *   3. only then show a recovery card, with copyable diagnostics.
  */
 export class ErrorBoundary extends BaseComponent {
+  private resetTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor(props: ErrorBoundaryProps) {
     super(props);
-    this.state = { error: null, remountKey: 0, recoveryAttempts: 0 };
+    this.state = { error: null, remountKey: 0, recoveryAttempts: 0, diagnostics: null, copied: false };
   }
 
   static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
     return { error };
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('Workspace render error:', error, info?.componentStack);
+  componentWillUnmount() {
+    if (this.resetTimer) clearTimeout(this.resetTimer);
+  }
 
-    if (isRecoverableDomError(error)) {
-      this.setState((prev) => {
-        if (prev.recoveryAttempts >= MAX_AUTO_RECOVERIES) return { error };
-        return {
-          error: null,
-          remountKey: prev.remountKey + 1,
-          recoveryAttempts: prev.recoveryAttempts + 1
-        };
-      });
+  private scheduleAttemptReset() {
+    if (this.resetTimer) clearTimeout(this.resetTimer);
+    this.resetTimer = setTimeout(() => {
+      this.setState({ recoveryAttempts: 0 });
+    }, STABLE_RESET_MS);
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    const label = this.props.label || (this.props.variant === 'panel' ? '工作区' : '应用根');
+    const diagnostics = recordRenderError(error, info?.componentStack || '', label);
+    this.setState({ diagnostics });
+
+    if (!isRecoverableDomError(error)) return;
+
+    const attempts = this.state.recoveryAttempts;
+
+    if (attempts === 0) {
+      // First try: rebuild just this subtree.
+      this.setState((prev) => ({
+        error: null,
+        remountKey: prev.remountKey + 1,
+        recoveryAttempts: prev.recoveryAttempts + 1
+      }));
+      this.scheduleAttemptReset();
+      return;
+    }
+
+    if (attempts === 1) {
+      // The subtree remount hit the same broken parent, so discard the entire
+      // root. Deferred to a macrotask so React finishes this commit first.
+      this.setState((prev) => ({ recoveryAttempts: prev.recoveryAttempts + 1 }));
+      setTimeout(() => {
+        if (!requestAppRemount()) {
+          console.warn('No app remount handler registered; leaving the recovery card visible.');
+        }
+      }, 0);
     }
   }
 
   private handleRetry = () => {
+    // A manual retry gets the strongest option straight away.
+    if (requestAppRemount()) return;
     this.setState((prev) => ({ error: null, remountKey: prev.remountKey + 1, recoveryAttempts: 0 }));
+  };
+
+  private handleCopyDiagnostics = async () => {
+    const { diagnostics } = this.state;
+    if (!diagnostics) return;
+    const text = formatDiagnostics(diagnostics);
+    try {
+      await navigator.clipboard.writeText(text);
+      this.setState({ copied: true });
+    } catch {
+      console.info('[render-diagnostics] clipboard unavailable, printing instead:\n' + text);
+      this.setState({ copied: true });
+    }
   };
 
   private handleReload = () => {
@@ -91,7 +144,7 @@ export class ErrorBoundary extends BaseComponent {
   };
 
   render() {
-    const { error, remountKey } = this.state;
+    const { error, remountKey, diagnostics, copied } = this.state;
     const { children, variant = 'page', label } = this.props;
 
     // The key makes a recovery attempt discard the corrupted subtree instead of
@@ -101,8 +154,19 @@ export class ErrorBoundary extends BaseComponent {
     const detail = (
       <pre className="text-[11px] text-slate-400 bg-slate-950 border border-slate-800 rounded-lg p-3 overflow-auto max-h-40 whitespace-pre-wrap">
         {error.message}
+        {diagnostics?.domSignals.length ? '\n\n' + diagnostics.domSignals.join('\n') : ''}
       </pre>
     );
+
+    const copyButton = diagnostics ? (
+      <button
+        type="button"
+        onClick={this.handleCopyDiagnostics}
+        className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm font-medium border border-slate-700"
+      >
+        {copied ? '诊断信息已复制' : '复制诊断信息'}
+      </button>
+    ) : null;
 
     if (variant === 'panel') {
       return (
@@ -111,7 +175,7 @@ export class ErrorBoundary extends BaseComponent {
             {label ? `${label}加载失败` : '该工作区加载失败'}
           </h2>
           <p className="text-sm text-slate-300">
-            其他工作区仍可使用。可以先重试加载；若反复失败，请重新加载页面。
+            其他工作区仍可使用。可以先重试加载；若再次失败，请重新加载页面。若浏览器装了网页翻译或阅读增强类扩展，请在本页面停用后重试。
           </p>
           {detail}
           <div className="flex flex-wrap gap-2">
@@ -129,6 +193,7 @@ export class ErrorBoundary extends BaseComponent {
             >
               重新加载页面
             </button>
+            {copyButton}
           </div>
         </div>
       );
@@ -164,6 +229,7 @@ export class ErrorBoundary extends BaseComponent {
             >
               清空本地模型配置并重载
             </button>
+            {copyButton}
           </div>
         </div>
       </div>
