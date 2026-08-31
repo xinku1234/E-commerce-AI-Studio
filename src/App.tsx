@@ -40,7 +40,12 @@ export default function App() {
   // is the model each AI call uses. The workspace stays locked until the server
   // confirms a usable model.
   const modelBinding = useModelBinding();
-  const requestModelConfig = () => setModelConfigRequest(value => value + 1);
+  // The model dialog lives in the hero workspace, so a request from any other
+  // workspace has to bring the user there for the dialog to be reachable.
+  const requestModelConfig = () => {
+    setActiveTab('hero');
+    setModelConfigRequest(value => value + 1);
+  };
   
   const [batchTasks, setBatchTasks] = useState<BatchTask[]>(() => {
     try {
@@ -133,6 +138,8 @@ export default function App() {
               <DetailPageStudio
                 currentProduct={currentProduct}
                 onNavigateToPublish={() => setActiveTab('publish')}
+                modelBinding={modelBinding}
+                onRequireModel={requestModelConfig}
               />
             </Suspense>
           </ErrorBoundary>

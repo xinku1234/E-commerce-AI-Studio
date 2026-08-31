@@ -23,16 +23,26 @@ import { packageAndDownloadZip, fireSuccessConfetti } from '../../utils/exportUt
 import { safeFetchJson } from '../../utils/apiUtils';
 import { renderFullDetailPageLongImage } from '../../utils/detailPageRenderer';
 import { withUniqueIds } from '../../utils/uniqueId';
+import { ModelBinding } from '../../hooks/useModelBinding';
+import { describeModelFailure } from '../../utils/modelErrors';
 
 interface DetailPageStudioProps {
   currentProduct: ProductItem;
   onNavigateToPublish: () => void;
+  modelBinding: ModelBinding;
+  onRequireModel?: () => void;
 }
 
 export const DetailPageStudio: React.FC<DetailPageStudioProps> = ({
   currentProduct,
-  onNavigateToPublish
+  onNavigateToPublish,
+  modelBinding,
+  onRequireModel
 }) => {
+  // Detail page copy is a prompt task, so it runs on the shared prompt binding
+  // instead of assuming a server-side Gemini key.
+  const { modelRequired, promptModelReady, promptModelRequest, markBindingRejected } = modelBinding;
+  const promptModelUsable = !modelRequired || promptModelReady;
   const [modules, setModules] = useState<DetailPageModule[]>(DEFAULT_DETAIL_MODULES);
   const [activeModuleId, setActiveModuleId] = useState<string>(DEFAULT_DETAIL_MODULES[0].id);
   const [viewMode, setViewMode] = useState<'mobile' | 'desktop'>('mobile');
@@ -49,6 +59,14 @@ export const DetailPageStudio: React.FC<DetailPageStudioProps> = ({
 
   // AI Generation of entire detail page
   const handleAiRegenerateDetailPage = async () => {
+    if (!promptModelUsable) {
+      setGenerationNotice({
+        type: 'error',
+        text: '未绑定可用的提示词模型，请先在「模型与接口配置」中完成绑定与连接测试。'
+      });
+      onRequireModel?.();
+      return;
+    }
     setIsGeneratingAi(true);
     setGenerationNotice(null);
     try {
@@ -59,9 +77,12 @@ export const DetailPageStudio: React.FC<DetailPageStudioProps> = ({
           productName: currentProduct.name,
           category: currentProduct.category,
           sellingPoints: currentProduct.sellingPoints,
-          customSpecs: currentProduct.specs
+          customSpecs: currentProduct.specs,
+          promptModel: promptModelRequest.modelName,
+          customEndpointUrl: promptModelRequest.customEndpointUrl,
+          customApiKey: promptModelRequest.customApiKey
         })
-      }, 25000);
+      }, 45000);
 
       const data = res.data;
       if (data && data.success && data.modules?.length) {
@@ -81,7 +102,12 @@ export const DetailPageStudio: React.FC<DetailPageStudioProps> = ({
         });
         fireSuccessConfetti();
       } else {
-        setGenerationNotice({ type: 'error', text: res.error || '详情页生成失败，请确认服务端状态。' });
+        const failure = describeModelFailure(res, '详情页生成失败，请确认模型绑定与服务端状态。');
+        if (failure.kind === 'model-required') {
+          markBindingRejected();
+          onRequireModel?.();
+        }
+        setGenerationNotice({ type: 'error', text: failure.message });
       }
     } catch (e: any) {
       console.error('Failed to generate detail page:', e);

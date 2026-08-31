@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 
 const port = 3217;
 const child = spawn(process.execPath, ['dist/server.cjs'], {
@@ -50,7 +51,14 @@ try {
 
   const strictPort = 3218;
   const strictChild = spawn(process.execPath, ['dist/server.cjs'], {
-    env: { ...process.env, NODE_ENV: 'production', PORT: String(strictPort), REQUIRE_MODEL: 'true', GEMINI_API_KEY: '' },
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      PORT: String(strictPort),
+      REQUIRE_MODEL: 'true',
+      GEMINI_API_KEY: '',
+      ALLOW_PRIVATE_ENDPOINTS: 'true'
+    },
     stdio: 'ignore'
   });
   try {
@@ -103,6 +111,60 @@ try {
       body: JSON.stringify({ endpointUrl: 'https://127.0.0.1:59999/v1' })
     });
     if (testRes.status === 200) throw new Error(`unreachable endpoint reported as connected`);
+
+    // A bound custom endpoint that fails must be reported as its own failure,
+    // never as a message about a provider the user never selected.
+    const fakePort = 34117;
+    const fake = createServer((req, res) => {
+      if (req.url?.endsWith('/models')) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ data: [{ id: 'claude-opus-5' }] }));
+        return;
+      }
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'invalid api key' } }));
+    });
+    await new Promise((resolve) => fake.listen(fakePort, '127.0.0.1', resolve));
+    try {
+      const endpointUrl = `http://127.0.0.1:${fakePort}/v1`;
+      const verify = await fetch(`http://127.0.0.1:${strictPort}/api/test-custom-endpoint`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ endpointUrl })
+      });
+      const verifyJson = await verify.json();
+      if (!verify.ok || verifyJson.verified !== true) throw new Error('reachable endpoint was not verified');
+
+      const analyze = await fetch(`http://127.0.0.1:${strictPort}/api/ai-analyze-product`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ productName: '测试水杯', analysisModel: 'claude-opus-5', customEndpointUrl: endpointUrl })
+      });
+      const analyzeJson = await analyze.json();
+      if (analyze.status !== 502 || analyzeJson.code !== 'CUSTOM_ENDPOINT_FAILED') {
+        throw new Error(`custom endpoint failure was not surfaced: ${analyze.status} ${JSON.stringify(analyzeJson).slice(0, 200)}`);
+      }
+      if (!analyzeJson.error?.includes('claude-opus-5') || !analyzeJson.error?.includes('401')) {
+        throw new Error('custom endpoint failure lacks model or status detail');
+      }
+      if (/Gemini/i.test(analyzeJson.error)) throw new Error('custom endpoint failure misattributed to Gemini');
+      if (analyzeJson.generationMode === 'ai') throw new Error('failed call reported as AI output');
+
+      for (const route of ['/api/generate-multimodal-platform-prompt', '/api/generate-detail-page-modules']) {
+        const failed = await fetch(`http://127.0.0.1:${strictPort}${route}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ productName: '测试水杯', promptModel: 'claude-opus-5', customEndpointUrl: endpointUrl })
+        });
+        const failedJson = await failed.json();
+        if (failed.status !== 502 || failedJson.code !== 'CUSTOM_ENDPOINT_FAILED') {
+          throw new Error(`route did not surface endpoint failure: ${route} -> ${failed.status}`);
+        }
+        if (/Gemini/i.test(failedJson.error || '')) throw new Error(`route misattributed failure: ${route}`);
+      }
+    } finally {
+      await new Promise((resolve) => fake.close(resolve));
+    }
   } finally {
     strictChild.kill();
   }

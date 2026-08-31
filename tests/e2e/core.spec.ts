@@ -73,13 +73,57 @@ test('fallback product analysis does not invent claims', async ({ request }) => 
   expect(serialized).not.toMatch(/航空级|权威认证|提升50%|百亿补贴|质保换新/);
 });
 
-test('detail generation exposes safe fallback status', async ({ page }) => {
+test('detail generation labels the explicit demo mode instead of claiming AI output', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /详情页长图工坊/ }).click();
   await page.getByRole('button', { name: 'AI 一键生成完整详情页' }).click();
-  await expect(page.getByText(/安全模板/)).toBeVisible();
+  await expect(page.getByText(/演示模式/)).toBeVisible();
   await expect(page.getByRole('heading', { name: '服务与售后说明' })).toBeVisible();
   await expect(page.getByText('3年官方联保')).toHaveCount(0);
+});
+
+test('a failing bound endpoint is reported as an endpoint failure, not as a missing provider', async ({ page }) => {
+  await page.goto('/');
+  await page.evaluate(() => {
+    localStorage.setItem('SELECTED_PROMPT_MODEL', 'custom-prompt-model');
+    localStorage.setItem('CUSTOM_PROMPT_CONFIG', JSON.stringify({
+      endpointUrl: 'http://127.0.0.1:4599/v1',
+      testStatus: 'success',
+      selectedModel: 'claude-opus-5',
+      manualModel: 'claude-opus-5',
+      useManual: false,
+      fetchedModels: ['claude-opus-5']
+    }));
+  });
+  await page.reload();
+
+  await page.route('**/api/ai-analyze-product', async (route) => {
+    await route.fulfill({
+      status: 502,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: false,
+        code: 'CUSTOM_ENDPOINT_FAILED',
+        provider: 'custom-openai-compatible',
+        endpoint: 'http://127.0.0.1:4599/v1/chat/completions',
+        modelUsed: 'claude-opus-5',
+        error: '自定义模型端点调用失败（HTTP 401）：invalid api key（端点 http://127.0.0.1:4599/v1/chat/completions，模型 claude-opus-5）',
+        hint: '请在「模型与接口配置」中核对接口地址、模型名称与 API Key，然后重新执行连接测试。'
+      })
+    });
+  });
+
+  await page.locator('#active-product-btn').click();
+  await page.getByRole('button', { name: /上传自定义商品/ }).click();
+  await page.getByTestId('custom-product-images').setInputFiles({ name: 'product.png', mimeType: 'image/png', buffer: PNG_FIXTURE });
+  await page.getByRole('button', { name: /AI 一键提炼卖点/ }).click();
+
+  const alert = page.getByRole('alert');
+  await expect(alert).toContainText('claude-opus-5');
+  await expect(alert).toContainText('HTTP 401');
+  // The old message blamed a provider the user never bound.
+  await expect(alert).not.toContainText('Gemini');
+  await expect(page.getByText('待商家核对')).toHaveCount(0);
 });
 
 test('mobile users can navigate all workspaces without horizontal overflow', async ({ page }) => {

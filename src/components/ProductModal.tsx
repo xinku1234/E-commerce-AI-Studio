@@ -20,6 +20,7 @@ import { SAMPLE_PRODUCTS } from '../data/presets';
 import { safeFetchJson } from '../utils/apiUtils';
 import { optimizeImageForUpload } from '../utils/imageMatting';
 import { ModelBinding } from '../hooks/useModelBinding';
+import { describeModelFailure } from '../utils/modelErrors';
 import { uniqueId } from '../utils/uniqueId';
 
 interface ProductModalProps {
@@ -150,7 +151,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       const data = res.data;
       if (data?.code === 'MODEL_REQUIRED') {
         markBindingRejected();
-        setExtractError(data.error || '未绑定可用模型，请先完成模型绑定与连接测试。');
+        setExtractError(describeModelFailure(res, '未绑定可用模型，请先完成模型绑定与连接测试。').message);
         onRequireModel?.();
         return;
       }
@@ -167,8 +168,9 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         return;
       }
       // No silent template fill: the model did not return a usable result, so
-      // say so and leave the list untouched.
-      setExtractError(data?.warning || res.error || '模型未返回可用的识别结果，请检查模型绑定或稍后重试。');
+      // say so and leave the list untouched. The message names the provider that
+      // actually failed instead of guessing.
+      setExtractError(describeModelFailure(res, '模型未返回可用的识别结果，请检查模型绑定或稍后重试。').message);
     } catch (e) {
       console.warn('AI selling point extraction failed:', e);
       setExtractError('AI 请求失败，请检查模型绑定与网络后重试。');

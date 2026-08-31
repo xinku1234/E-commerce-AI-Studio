@@ -10,6 +10,22 @@ import { apiNotFound, errorHandler, requestContext } from "./server/http";
 import { simulateChannelPublish } from "./server/publishSimulation";
 import { validateRequestUrl } from "./server/security";
 import { hasVerifiedEndpoint, isEndpointVerified, markEndpointVerified } from "./server/ai/verifiedEndpoints";
+import { collectImageDataUrls, extractJsonObject, requestCustomChatJson } from "./server/ai/openAiCompatible";
+import {
+  DEMO_MODE_WARNING,
+  mapGeminiTextModel,
+  modelUnavailablePayload,
+  normalizeDetailModules,
+  resolveModelRoute,
+  respondModelCallFailure
+} from "./server/ai/modelRouting";
+import {
+  PLATFORM_DISPLAY_NAMES,
+  SLOT_DISPLAY_NAMES,
+  buildDemoPlatformPrompt,
+  buildPlatformPromptRequest,
+  buildProductAnalysisPrompt
+} from "./server/ai/analysisPrompts";
 
 dotenv.config();
 
@@ -472,11 +488,11 @@ function buildSafeProductGuidance(productName = "待命名商品", category = "�
 
 // 2. AI Product Vision Analysis & Platform-Tailored Prompting (Multi-Image Vision Enabled)
 app.post("/api/ai-analyze-product", async (req, res) => {
-  const { 
-    productName, 
-    category, 
-    targetPlatform, 
-    userNotes, 
+  const {
+    productName,
+    category,
+    targetPlatform,
+    userNotes,
     imageBase64,
     images,
     analysisModel = "gemini-3.7-flash",
@@ -488,195 +504,99 @@ app.post("/api/ai-analyze-product", async (req, res) => {
   if (modelError) return res.status(503).json(modelError);
 
   const fallbackData = buildSafeProductGuidance(
-    productName || "智能高品质商品", 
-    category || "3C数码 / 生活美学", 
-    targetPlatform || "淘宝/天猫", 
+    productName || "智能高品质商品",
+    category || "3C数码 / 生活美学",
+    targetPlatform || "淘宝/天猫",
     userNotes || ""
   );
 
+  const route = resolveModelRoute({
+    customEndpointUrl,
+    customApiKey,
+    requestedModel: analysisModel,
+    customFallbackModel: "gpt-4o",
+    geminiModel: mapGeminiTextModel(analysisModel)
+  });
+
   try {
-    // Resolve all provided images into inlineData items
     const resolvedImageParts = await resolveImageParts(images, imageBase64);
-    const hasImages = resolvedImageParts.length > 0;
-
-    // Check if user is using a custom endpoint with OpenAI-compatible API
-    if (customEndpointUrl && (analysisModel.includes("custom") || customApiKey || customEndpointUrl.includes("http"))) {
-      try {
-        let cleanUrl = validateRequestUrl(customEndpointUrl, "自定义接口地址");
-        let chatUrl = cleanUrl.endsWith("/chat/completions") ? cleanUrl : `${cleanUrl}/chat/completions`;
-        if (!chatUrl.includes("/v1") && !chatUrl.includes("/chat")) {
-          chatUrl = `${cleanUrl}/v1/chat/completions`;
-        }
-
-        const promptText = `你是一位电商视觉总监与爆款营销专家。请仔细分析上传的${resolvedImageParts.length}张商品实拍参考图，为商品【${productName || '品质好物'}】(品类:${category || '生活电商'}, 平台:${targetPlatform || '淘宝/天猫'}, 诉求:${userNotes || '高级感'})生成商业摄影提示词与营销文案。严格返回JSON格式，包含productIdentified, materialsDetected(数组), lightingMood, compositionTip, visualPrompt(英文高质量生图Prompt), visualPromptCn(中文提示词), negativePrompt, coreSellingPoints(4条数组), heroTitles(3条数组), badges(4条数组), painPoints(3条数组), platformOptimizations(对象: platform, aspectRatio, colorScheme, visualTip, complianceNote), targetAudience。`;
-
-        const msgContent: any[] = [{ type: "text", text: promptText }];
-        if (hasImages && images && Array.isArray(images)) {
-          for (const img of images.slice(0, 3)) {
-            if (img && typeof img === "string" && img.length < 500000) {
-              msgContent.push({ type: "image_url", image_url: { url: img } });
-            }
-          }
-        } else if (hasImages && imageBase64 && imageBase64.length < 500000) {
-          msgContent.push({ type: "image_url", image_url: { url: imageBase64 } });
-        }
-
-        const customRes = await fetch(chatUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(customApiKey ? { "Authorization": `Bearer ${customApiKey.trim()}` } : {})
-          },
-          body: JSON.stringify({
-            model: analysisModel.replace("custom-prompt-model", "gpt-4o"),
-            messages: [{ role: "user", content: msgContent }],
-            temperature: 0.7,
-            response_format: { type: "json_object" }
-          }),
-          signal: AbortSignal.timeout(12000)
-        });
-
-        if (customRes.ok) {
-          const customData = await customRes.json();
-          const content = customData.choices?.[0]?.message?.content;
-          if (content) {
-            const parsed = JSON.parse(content);
-            return res.json({
-              success: true,
-              generationMode: "ai",
-              modelUsed: analysisModel,
-              data: { ...fallbackData, ...parsed }
-            });
-          }
-        }
-      } catch (customErr) {
-        console.warn("Custom model request fallback:", customErr);
-      }
-    }
-    
-    const ai = getGeminiClient();
-
-    // Map requested model to a valid Gemini SDK model
-    let targetModel = "gemini-3.7-flash";
-    if (analysisModel === "gemini-3.1-pro-preview" || analysisModel === "gemini-2.5-pro") {
-      targetModel = "gemini-3.1-pro-preview";
-    } else if (analysisModel === "gemini-2.5-flash") {
-      targetModel = "gemini-2.5-flash";
-    } else {
-      targetModel = "gemini-3.7-flash";
-    }
-
-    if (!ai) {
-      return res.json({
-        success: true,
-        generationMode: "fallback",
-        warning: "未配置 Gemini，当前结果为规则建议，不代表已识别图片中的真实参数或认证。",
-        modelUsed: "intelligent-ecom-engine",
-        data: fallbackData
-      });
-    }
-
-    // Prepare multimodal vision prompt with all resolved images
-    const parts: any[] = [];
-    for (const p of resolvedImageParts) {
-      parts.push({
-        inlineData: {
-          mimeType: p.mimeType,
-          data: p.data
-        }
-      });
-    }
-
-    const promptText = `你是一位享誉业界的资深电商多模态视觉总监与爆款营销专家。
-${hasImages ? `【极其重要：用户已上传 ${resolvedImageParts.length} 张真实商品多角度实拍图，请通过所有实拍图的真实外观、做工细节、材质触感、颜色光泽与立体结构精准识别这是什么商品，严禁随意套用通用模版或脱离实物生成无意义词汇！】` : ''}
-
-上下文信息：
-- 用户输入名称: ${productName && productName !== "智能高品质商品" ? productName : "（请直接基于实拍图识别具体商品名称与品类）"}
-- 所选类目: ${category || "自动识别"}
-- 目标电商渠道: ${targetPlatform || "淘宝/天猫"}
-- 商家要求: ${userNotes || "突出高级质感、真实工业设计/彩妆/材质光影与高转化核心卖点"}
-
-请完成：
-1. 【商品精准识别】：识别出具体商品名称（如：元气柔雾浮雕双色腮红、哑光丝绒持色唇釉、降噪头戴耳机等），识别所属类目、真实物理形态、配色（如奶杏蜜桃粉、冷调玫瑰红等）、粉质或材质（如微米烘焙细腻粉体、磨砂亚克力管身等）。
-2. 【核心卖点提炼】：提炼4条严格匹配图片中商品真实特性的核心卖点（每条15-25字）。
-3. 【爆款主标题】：生成3条吸引眼球的高点击率主标题。
-4. 【营销标签与痛点对比】：输出4-5个营销标签和3条痛点与解决方案对比。
-5. 【商业摄影Prompt（严禁固定模板，必须深度融合【多张实拍图中的具体商品形态材质】与【目标平台商业规范】）】：
-   - 若平台为【1688 (源头工厂/批发)】：Prompt必须突出B2B工业级展台/工厂展厅、高保真做工、清晰展现材料质感与规格细节，明亮通透工业柔光，高保真8K无虚假滤镜；
-   - 若平台为【亚马逊 (Amazon)】：Prompt必须严格为 100% pure flat white seamless background RGB(255,255,255)，主体占85%以上，无文字无水印，真实接触阴影，360°柔光箱；
-   - 若平台为【抖音 / 小红书】：Prompt必须突出3:4竖屏生活美学、温暖自然晨光与室内/桌面美学场景代入感、柔和景深与真实种草氛围；
-   - 若平台为【京东】：Prompt必须突出数码/家电精工质感、冷调商业逆光与金属反光；
-   - 若平台为【淘宝 / 天猫】：Prompt必须突出轻奢商业展台、双顶柔光箱与45°轮廓光，电影级浅景深与高转化大片质感。
-   输出英文用于AI生图引擎的高精度Prompt (visualPrompt) 与中文描述对照 (visualPromptCn)。
-
-严格返回 JSON 格式：
-{
-  "productIdentified": "识别出的商品具体名称",
-  "categoryIdentified": "识别出的所属细分类目",
-  "materialsDetected": ["检测到的材质/粉质/包装1", "检测到的材质/粉质/包装2"],
-  "lightingMood": "布光方案说明",
-  "compositionTip": "构图建议",
-  "visualPrompt": "英文用于AI生图的高清摄影Prompt（严禁通用模版，必须结合具体商品与目标平台规范）",
-  "visualPromptCn": "对应的中文摄影提示词描述",
-  "negativePrompt": "blurry, low quality, bad reflection, distorted edges",
-  "coreSellingPoints": ["核心卖点1", "核心卖点2", "核心卖点3", "核心卖点4"],
-  "heroTitles": ["大字报主标题1", "主标题2", "主标题3"],
-  "badges": ["推荐标签1", "标签2", "标签3", "标签4"],
-  "painPoints": ["买家疑虑与打消方案1", "方案2", "方案3"],
-  "platformOptimizations": {
-    "platform": "${targetPlatform || '淘宝/天猫'}",
-    "aspectRatio": "${targetPlatform === 'douyin' || targetPlatform === 'xiaohongshu' ? '3:4' : '1:1'}",
-    "colorScheme": "主图色彩方案建议",
-    "visualTip": "视觉转化提升建议",
-    "complianceNote": "平台合规提示"
-  },
-  "targetAudience": "核心目标购买人群"
-}`;
-
-    parts.push({ text: promptText });
-
-    const response = await ai.models.generateContent({
-      model: targetModel,
-      contents: { parts },
-      config: {
-        responseMimeType: "application/json",
-        temperature: 0.4
-      }
+    const promptText = buildProductAnalysisPrompt({
+      productName,
+      category,
+      targetPlatform,
+      userNotes,
+      imageCount: resolvedImageParts.length
     });
 
-    const responseText = response.text || "";
-    if (responseText) {
+    if (route.kind === "custom") {
       try {
-        const parsed = JSON.parse(responseText);
+        const parsed = await requestCustomChatJson({
+          endpointUrl: route.endpointUrl,
+          apiKey: route.apiKey,
+          model: route.model,
+          userText: promptText,
+          imageUrls: collectImageDataUrls(images, imageBase64, 3),
+          temperature: 0.5,
+          timeoutMs: 45000
+        });
         return res.json({
           success: true,
           generationMode: "ai",
-          modelUsed: targetModel,
-          data: {
-            ...fallbackData,
-            ...parsed
-          }
+          provider: "custom-openai-compatible",
+          modelUsed: route.model,
+          data: { ...fallbackData, ...parsed }
         });
-      } catch (parseErr) {
-        console.warn("JSON parse error from Gemini vision:", parseErr);
+      } catch (customError: any) {
+        return respondModelCallFailure(res, customError, fallbackData ? { data: fallbackData } : undefined);
+      }
+    }
+
+    if (route.kind === "gemini") {
+      const ai = getGeminiClient();
+      if (!ai) return res.status(503).json(modelUnavailablePayload());
+      const parts: any[] = [];
+      for (const p of resolvedImageParts) {
+        parts.push({ inlineData: { mimeType: p.mimeType, data: p.data } });
+      }
+      parts.push({ text: promptText });
+
+      try {
+        const response = await ai.models.generateContent({
+          model: route.model,
+          contents: { parts },
+          config: { responseMimeType: "application/json", temperature: 0.4 }
+        });
+        const parsed = extractJsonObject(response.text || "");
+        return res.json({
+          success: true,
+          generationMode: "ai",
+          provider: "gemini",
+          modelUsed: route.model,
+          data: { ...fallbackData, ...parsed }
+        });
+      } catch (geminiError: any) {
+        return respondModelCallFailure(
+          res,
+          new Error(`Gemini 模型 ${route.model} 调用失败：${geminiError?.message || "未知错误"}`),
+          { data: fallbackData }
+        );
       }
     }
 
     return res.json({
       success: true,
       generationMode: "fallback",
-      warning: "模型响应无法解析，已返回规则建议，请人工核对。",
-      modelUsed: targetModel,
+      warning: DEMO_MODE_WARNING,
+      modelUsed: "intelligent-ecom-engine",
       data: fallbackData
     });
   } catch (error: any) {
     console.error("AI vision analysis error:", error);
-    return res.json({
-      success: true,
-      generationMode: "fallback",
-      warning: "AI 分析失败，已返回规则建议，请勿将其视为真实检测结果。",
-      modelUsed: "intelligent-ecom-engine",
-      data: fallbackData
+    return res.status(500).json({
+      success: false,
+      error: `商品分析请求处理失败：${error?.message || "未知错误"}`,
+      code: "ANALYSIS_REQUEST_FAILED",
+      requestId: res.locals.requestId
     });
   }
 });
@@ -702,317 +622,204 @@ app.post("/api/generate-multimodal-platform-prompt", async (req, res) => {
   const modelError = requireConfiguredModel(customEndpointUrl);
   if (modelError) return res.status(503).json(modelError);
 
+  const route = resolveModelRoute({
+    customEndpointUrl,
+    customApiKey,
+    requestedModel: promptModel,
+    customFallbackModel: "gpt-4o",
+    geminiModel: mapGeminiTextModel(promptModel)
+  });
+
   try {
     const resolvedImageParts = await resolveImageParts(images, imageBase64);
-    const hasImages = resolvedImageParts.length > 0;
-
-    const platformNames: Record<string, string> = {
-      taobao: "淘宝 / 天猫旗舰店",
-      jd: "京东自营 / 旗舰店",
-      pinduoduo: "拼多多百亿补贴 / 爆款主图",
-      "1688": "1688 源头工厂 / 实力商家批发",
-      douyin: "抖音电商 / 竖屏种草流",
-      xiaohongshu: "小红书美学种草 / 笔记主图",
-      amazon: "亚马逊 Amazon (100%纯白底合规)",
-      shopify: "Shopify / 独立站极简国际范"
-    };
-
-    const slotNames: Record<string, string> = {
-      slot_1_ctr: "第1张：高点击爆款首图 (CTR视觉焦点)",
-      slot_2_detail: "第2张：微距工艺与核心材质细节图",
-      slot_3_dimension: "第3张：尺寸规格与工学比例标线图",
-      slot_4_scene: "第4张：真实生活方式与使用场景氛围图",
-      slot_5_whitebg: "第5张：100%合规纯白底透底图 (RGB 255,255,255)",
-      detail_poster: "详情页首屏：品牌定位超级海报",
-      detail_selling_point: "详情页核心卖点：技术/配方/材质深度拆解",
-      detail_spec: "详情页参数矩阵：包装清单与规格参数表"
-    };
-
-    const currentPlatformName = platformNames[targetPlatform] || targetPlatform;
-    const currentSlotName = slotNames[slot] || slot;
-
-    // Check if custom OpenAI-compatible endpoint is configured
-    if (customEndpointUrl && (promptModel.includes("custom") || customApiKey || customEndpointUrl.includes("http"))) {
-      try {
-        let cleanUrl = validateRequestUrl(customEndpointUrl, "自定义接口地址");
-        let chatUrl = cleanUrl.endsWith("/chat/completions") ? cleanUrl : `${cleanUrl}/chat/completions`;
-        if (!chatUrl.includes("/v1") && !chatUrl.includes("/chat")) {
-          chatUrl = `${cleanUrl}/v1/chat/completions`;
-        }
-
-        const systemPrompt = `你是一位享誉全球的顶级商业广告摄影指导与电商高转化视觉操盘手。
-你必须基于用户提供的【${resolvedImageParts.length} 张真实商品实拍多角度图】，结合目标平台【${currentPlatformName}】与当前槽位【${currentSlotName}】，量身策划非固定、独一无二的超高保真商业摄影 AI 生成提示词 (Prompt)。
-严格返回JSON格式。`;
-
-        const userMsg = `商品名称: ${productName || "根据实拍图识别"}
-品类: ${category || "自动识别"}
-卖点参考: ${(sellingPoints || []).join("；")}
-规格参考: ${(specs || []).join("；")}
-目标平台: ${currentPlatformName}
-主图/详情页槽位: ${currentSlotName}
-场景预设偏好: ${sceneStyle || "商业影棚"}
-特殊补充要求: ${userInstruction || "突出真实质感与高转化视觉冲击力"}
-
-请输出JSON：
-{
-  "recognizedProduct": {
-    "name": "识别的商品精准名称",
-    "category": "所属品类",
-    "detectedMaterials": ["从实拍图中看到的真实材质1", "材质2"],
-    "colors": ["实拍图中的真实配色方案"],
-    "geometry": "实拍图中展现的产品外形结构特征"
-  },
-  "platformStrategy": {
-    "platformName": "${currentPlatformName}",
-    "slotName": "${currentSlotName}",
-    "conversionKey": "本平台本槽位的核心点击/转化心理学依据",
-    "lightingDesign": "专业影棚布光方案（如双顶柔光箱+45°轮廓金光）",
-    "cameraAngle": "摄影机位与景深（如85mm镜头、f/2.8微距浅景深）",
-    "podiumOrBackground": "展台/背景材质与空间搭配"
-  },
-  "promptEn": "极具商业大片质感的英文AI生图Prompt（必须具体描述从实拍图中识别到的商品外观形态与材质，严禁模板化通用词，包含摄影光影、展台、8k photorealistic、octane render等细节）",
-  "promptCn": "对应的中文商业摄影策划描述与机位构思",
-  "negativePrompt": "blurry, low quality, distorted edges, mutated geometry, noisy, bad reflection, overexposed",
-  "recommendedTags": ["8k resolution", "commercial studio lighting", "ray-traced shadows", "macro craftsmanship", "e-commerce hero shot"]
-}`;
-
-        const msgContent: any[] = [{ type: "text", text: userMsg }];
-        if (hasImages && images && Array.isArray(images)) {
-          for (const img of images.slice(0, 4)) {
-            if (img && typeof img === "string" && img.length < 500000) {
-              msgContent.push({ type: "image_url", image_url: { url: img } });
-            }
-          }
-        }
-
-        const customRes = await fetch(chatUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(customApiKey ? { "Authorization": `Bearer ${customApiKey.trim()}` } : {})
-          },
-          body: JSON.stringify({
-            model: promptModel.replace("custom-prompt-model", "gpt-4o"),
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: msgContent }
-            ],
-            temperature: 0.6,
-            response_format: { type: "json_object" }
-          }),
-          signal: AbortSignal.timeout(12000)
-        });
-
-        if (customRes.ok) {
-          const customData = await customRes.json();
-          const content = customData.choices?.[0]?.message?.content;
-          if (content) {
-            const parsed = JSON.parse(content);
-            return res.json({
-              success: true,
-              modelUsed: promptModel,
-              data: parsed
-            });
-          }
-        }
-      } catch (customErr) {
-        console.warn("Custom prompt generator fallback:", customErr);
-      }
-    }
-
-    const ai = getGeminiClient();
-    if (!ai) {
-      // Fallback structured generation
-      const fallbackPromptEn = `High-end commercial e-commerce advertising photography of ${productName || "premium product"}, placed on a minimalist luxury studio podium tailored for ${currentPlatformName}, showcasing authentic textures and fine craftsmanship, professional softbox studio lighting, crisp 8k details, photorealistic advertising quality.`;
-      const fallbackPromptCn = `针对【${currentPlatformName}】平台【${currentSlotName}】的商业摄影策划：高端极简影棚展台，双柔光箱均匀布光与立体轮廓光，高保真还原实物做工与高级质感。`;
-      return res.json({
-        success: true,
-        modelUsed: "intelligent-prompt-engine",
-        data: {
-          recognizedProduct: {
-            name: productName || "高品质商品",
-            category: category || "生活电商",
-            detectedMaterials: ["精工复合材质", "微米触感涂层"],
-            colors: ["纯正原色"],
-            geometry: "工学流线形态"
-          },
-          platformStrategy: {
-            platformName: currentPlatformName,
-            slotName: currentSlotName,
-            conversionKey: "突出商品核心价值感与视觉品质冲击力",
-            lightingDesign: "商业影棚双顶柔光箱 + 45°轮廓光",
-            cameraAngle: "50mm 黄金商拍摄影机位",
-            podiumOrBackground: "质感静物展台与干净极简背景"
-          },
-          promptEn: fallbackPromptEn,
-          promptCn: fallbackPromptCn,
-          negativePrompt: "blurry, low quality, distorted structure, messy background, extra limbs, ugly reflections, noise, overexposed washed out highlights",
-          recommendedTags: ["8k resolution", "commercial studio lighting", "ray-traced shadows", "clean advertising shot"]
-        }
-      });
-    }
-
-    const parts: any[] = [];
-    for (const p of resolvedImageParts) {
-      parts.push({
-        inlineData: {
-          mimeType: p.mimeType,
-          data: p.data
-        }
-      });
-    }
-
-    const promptText = `你是一位享誉全球的顶级商业广告摄影总监与电商爆款视觉操盘手。
-${hasImages ? `【核心指令：已输入 ${resolvedImageParts.length} 张商品真实多角度实拍图。你必须深入观察所有实拍图中的真实商品形态、每一处倒角、物理材质光泽（如哑光磨砂、拉丝金属、透光玻璃、柔软皮革、丝绒粉质等）、真实配色与设计亮点。】` : ''}
-
-任务：为商品【${productName || '参考实拍图商品'}】在目标平台【${currentPlatformName}】的【${currentSlotName}】槽位，量身定制一个非模板化、精准契合实物特征的高转化商业摄影 AI 生图提示词 (Prompt)。
-
-背景参数：
-- 商品名称: ${productName || "基于实拍图识别"}
-- 商品类目: ${category || "基于实拍图识别"}
-- 核心卖点: ${(sellingPoints || []).join("；")}
-- 规格参数: ${(specs || []).join("；")}
-- 目标平台: ${currentPlatformName}
-- 目标槽位: ${currentSlotName}
-- 场景风格偏好: ${sceneStyle || "高端商业影棚"}
-- 商家补充说明: ${userInstruction || "结合实物特征与平台受众，打造极具视觉冲击力的商业大片"}
-
-【平台与槽位摄影规范】：
-1. 若为【1688 源头工厂/实力批发】：突出扎实用料、工业级无死角柔光、材质真材实料无过度美颜滤镜，展现工厂现货/代工品质；
-2. 若为【亚马逊 Amazon】：严格遵守 100% pure flat white seamless background RGB(255,255,255)，主体占85%以上，无任何文字/水印，真实接地软阴影，360°柔光箱；
-3. 若为【抖音 / 小红书】：3:4 竖屏生活美学与种草代入感，自然晨光透过窗棂斜射，轻柔景深与温馨真实生活空间；
-4. 若为【淘宝 / 天猫旗舰店】：高定商业展台、大师级双柔光箱+45°轮廓光，电影级浅景深与高转化轻奢质感；
-5. 若为【京东】：凸显精工科技感、高反差金属微光与硬朗理性品质；
-6. 若为【第2张细节图】：微距特写 (Macro Lens)，极浅景深，重点刻画实拍图中的微观材质纹理与精工倒角；
-7. 若为【第3张尺寸图】：标准中性等比工业摄影，预留尺寸标线排版空间；
-8. 若为【第4张场景图】：真实生活/办公/出行实景融合，自然光影与空间情绪价值。
-
-请严格返回 JSON 格式：
-{
-  "recognizedProduct": {
-    "name": "从实拍图中识别出的商品精确名称",
-    "category": "所属品类",
-    "detectedMaterials": ["从实拍图识别的材质1", "材质2", "材质3"],
-    "colors": ["实拍图中的真实配色"],
-    "geometry": "实拍图中展现的产品结构与外形特征"
-  },
-  "platformStrategy": {
-    "platformName": "${currentPlatformName}",
-    "slotName": "${currentSlotName}",
-    "conversionKey": "本平台本槽位的核心点击/转化心理学依据",
-    "lightingDesign": "专业影棚布光方案",
-    "cameraAngle": "摄影机位与焦段",
-    "podiumOrBackground": "展台与空间搭配"
-  },
-  "promptEn": "超高清英文AI生图Prompt（必须详细描述实拍图中的商品具体特征，严禁泛泛模板，包含专业摄影光影、镜头焦段、材质微反射、8k photorealistic、octane render等）",
-  "promptCn": "对应的中文商业摄影策划描述与机位构思",
-  "negativePrompt": "blurry, low quality, distorted edges, mutated geometry, noisy, bad reflection, overexposed, watermark, text errors",
-  "recommendedTags": ["8k resolution", "commercial studio lighting", "ray-traced shadows", "macro craftsmanship", "e-commerce hero shot"]
-}`;
-
-    parts.push({ text: promptText });
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
-      contents: { parts },
-      config: {
-        responseMimeType: "application/json",
-        temperature: 0.5
-      }
+    const currentPlatformName = PLATFORM_DISPLAY_NAMES[targetPlatform] || targetPlatform;
+    const currentSlotName = SLOT_DISPLAY_NAMES[slot] || slot;
+    const promptText = buildPlatformPromptRequest({
+      productName,
+      category,
+      sellingPoints,
+      specs,
+      platformName: currentPlatformName,
+      slotName: currentSlotName,
+      sceneStyle,
+      userInstruction,
+      imageCount: resolvedImageParts.length
     });
 
-    const responseText = response.text || "";
-    if (responseText) {
+    if (route.kind === "custom") {
       try {
-        const parsed = JSON.parse(responseText);
+        const parsed = await requestCustomChatJson({
+          endpointUrl: route.endpointUrl,
+          apiKey: route.apiKey,
+          model: route.model,
+          systemPrompt: "你是一位享誉全球的顶级商业广告摄影指导与电商高转化视觉操盘手，只返回严格的 JSON。",
+          userText: promptText,
+          imageUrls: collectImageDataUrls(images, imageBase64, 4),
+          temperature: 0.6,
+          timeoutMs: 45000
+        });
         return res.json({
           success: true,
-          modelUsed: "gemini-3.7-flash",
+          provider: "custom-openai-compatible",
+          modelUsed: route.model,
           data: parsed
         });
-      } catch (parseErr) {
-        console.warn("JSON parse error in multimodal prompt generator:", parseErr);
+      } catch (customError: any) {
+        return respondModelCallFailure(res, customError);
+      }
+    }
+
+    if (route.kind === "gemini") {
+      const ai = getGeminiClient();
+      if (!ai) return res.status(503).json(modelUnavailablePayload());
+      const parts: any[] = [];
+      for (const p of resolvedImageParts) {
+        parts.push({ inlineData: { mimeType: p.mimeType, data: p.data } });
+      }
+      parts.push({ text: promptText });
+
+      try {
+        const response = await ai.models.generateContent({
+          model: route.model,
+          contents: { parts },
+          config: { responseMimeType: "application/json", temperature: 0.5 }
+        });
+        const parsed = extractJsonObject(response.text || "");
+        return res.json({ success: true, provider: "gemini", modelUsed: route.model, data: parsed });
+      } catch (geminiError: any) {
+        return respondModelCallFailure(
+          res,
+          new Error(`Gemini 模型 ${route.model} 调用失败：${geminiError?.message || "未知错误"}`)
+        );
       }
     }
 
     return res.json({
       success: true,
-      modelUsed: "gemini-3.7-flash",
-      data: {
-        promptEn: `High-end commercial e-commerce advertising photography of ${productName || "product"}, tailored for ${currentPlatformName}, 8k, photorealistic.`,
-        promptCn: `针对【${currentPlatformName}】平台的专业商业摄影策划。`,
-        negativePrompt: "blurry, low quality, distorted",
-        recommendedTags: ["8k", "studio lighting"]
-      }
+      generationMode: "fallback",
+      warning: DEMO_MODE_WARNING,
+      modelUsed: "intelligent-prompt-engine",
+      data: buildDemoPlatformPrompt({
+        productName,
+        category,
+        platformName: currentPlatformName,
+        slotName: currentSlotName
+      })
     });
   } catch (err: any) {
     console.error("Multimodal prompt generator error:", err);
     return res.status(500).json({
       success: false,
-      message: err.message || "Failed to generate prompt"
+      error: `提示词生成请求处理失败：${err?.message || "未知错误"}`,
+      code: "PROMPT_REQUEST_FAILED",
+      requestId: res.locals.requestId
     });
   }
 });
 
 // 3. AI Detail Page Modules Generator
 app.post("/api/generate-detail-page-modules", async (req, res) => {
-  const { productName, category, targetPlatform, sellingPoints, customSpecs } = req.body || {};
-  const capabilities = getAiCapabilities();
-  if (capabilities.modelRequired && !capabilities.providers.gemini.configured) {
-    return res.status(503).json({
-      success: false,
-      error: "详情页文案生成当前依赖 Gemini，请先配置 GEMINI_API_KEY 后再使用。",
-      code: "MODEL_REQUIRED"
-    });
-  }
+  const {
+    productName,
+    category,
+    targetPlatform,
+    sellingPoints,
+    customSpecs,
+    promptModel = "gemini-3.7-flash",
+    customEndpointUrl,
+    customApiKey
+  } = req.body || {};
+
+  const modelError = requireConfiguredModel(customEndpointUrl);
+  if (modelError) return res.status(503).json(modelError);
+
   const fallbackModules = buildFallbackDetailModules({ productName, category, sellingPoints, customSpecs });
-  try {
-    const ai = getGeminiClient();
+  const route = resolveModelRoute({
+    customEndpointUrl,
+    customApiKey,
+    requestedModel: promptModel,
+    customFallbackModel: "gpt-4o",
+    geminiModel: mapGeminiTextModel(promptModel)
+  });
 
-    if (!ai) {
-      return res.json({
-        success: true,
-        generationMode: "fallback",
-        warning: "未配置 Gemini，已使用只基于现有商品资料的安全模板；待补充字段需要人工完善。",
-        modules: fallbackModules
-      });
-    }
-
-    const prompt = `你是一名顶级电商策划总监。请根据以下商品信息，为${targetPlatform || "电商平台"}生成包含6个模块的商品详情页完整文案与结构：
+  const prompt = `你是一名顶级电商策划总监。请根据以下商品信息，为${targetPlatform || "电商平台"}生成包含6个模块的商品详情页完整文案与结构：
 商品名称: ${productName || "精品好物"}
 品类: ${category || "综合百货"}
-用户核心卖点: ${sellingPoints ? JSON.stringify(sellingPoints) : "高品质、耐用、科技领先"}
+用户核心卖点: ${sellingPoints ? JSON.stringify(sellingPoints) : "按真实商品资料填写，未确认的信息标注为待补充"}
+规格参数: ${customSpecs ? JSON.stringify(customSpecs) : "按真实商品资料填写"}
 
-请返回规范的JSON格式详情页模块数组。`;
+要求：
+1. 严禁编造认证、检测数据、保修年限、销量与排名等无法核实的信息，未确认内容写成待商家补充；
+2. 每个模块包含 id、type、title、tag、headline、subheadline、bullets(数组)、specs(数组)、content 字段；
+3. 严格返回 JSON 对象，形如 { "modules": [ ... ] }。`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json"
+  try {
+    if (route.kind === "custom") {
+      try {
+        const parsed = await requestCustomChatJson({
+          endpointUrl: route.endpointUrl,
+          apiKey: route.apiKey,
+          model: route.model,
+          systemPrompt: "你是资深电商详情页策划总监，只返回严格的 JSON。",
+          userText: prompt,
+          temperature: 0.5,
+          timeoutMs: 45000
+        });
+        const modules = normalizeDetailModules(parsed);
+        if (!modules) throw new Error("模型未返回有效的详情页模块数组");
+        return res.json({
+          success: true,
+          generationMode: "ai",
+          provider: "custom-openai-compatible",
+          modelUsed: route.model,
+          modules
+        });
+      } catch (customError: any) {
+        return respondModelCallFailure(res, customError, { modules: fallbackModules });
       }
-    });
+    }
 
-    const parsed = JSON.parse(response.text?.trim() || "{}");
-    const modules = Array.isArray(parsed) ? parsed : parsed.modules;
-    if (!Array.isArray(modules) || modules.length === 0) throw new Error("模型未返回有效详情页模块");
-    // Models happily repeat the same module id; the client keys a reorderable
-    // list by it, so uniqueness is enforced before the payload leaves here.
-    const seenIds = new Set<string>();
-    const uniqueModules = modules.map((module: any, index: number) => {
-      const rawId = typeof module?.id === "string" ? module.id.trim() : "";
-      const id = rawId && !seenIds.has(rawId) ? rawId : `mod_${index}_${Math.random().toString(36).slice(2, 8)}`;
-      seenIds.add(id);
-      return { ...module, id };
-    });
-    return res.json({ success: true, generationMode: "ai", modules: uniqueModules });
-  } catch (error: any) {
-    console.error("Error generating detail page:", error);
+    if (route.kind === "gemini") {
+      const ai = getGeminiClient();
+      if (!ai) return res.status(503).json(modelUnavailablePayload());
+      try {
+        const response = await ai.models.generateContent({
+          model: route.model,
+          contents: prompt,
+          config: { responseMimeType: "application/json" }
+        });
+        const modules = normalizeDetailModules(extractJsonObject(response.text || ""));
+        if (!modules) throw new Error("模型未返回有效的详情页模块数组");
+        return res.json({
+          success: true,
+          generationMode: "ai",
+          provider: "gemini",
+          modelUsed: route.model,
+          modules
+        });
+      } catch (geminiError: any) {
+        return respondModelCallFailure(
+          res,
+          new Error(`Gemini 模型 ${route.model} 调用失败：${geminiError?.message || "未知错误"}`),
+          { modules: fallbackModules }
+        );
+      }
+    }
+
     return res.json({
       success: true,
       generationMode: "fallback",
-      warning: `AI 生成失败，已使用安全规则模板：${error.message || "未知错误"}`,
+      warning: DEMO_MODE_WARNING,
+      modelUsed: "intelligent-detail-engine",
       modules: fallbackModules
+    });
+  } catch (error: any) {
+    console.error("Error generating detail page:", error);
+    return res.status(500).json({
+      success: false,
+      error: `详情页生成请求处理失败：${error?.message || "未知错误"}`,
+      code: "DETAIL_REQUEST_FAILED",
+      requestId: res.locals.requestId
     });
   }
 });

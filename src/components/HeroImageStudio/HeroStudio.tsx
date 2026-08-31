@@ -21,6 +21,7 @@ import {
   ArrowRight,
   Check,
   AlertCircle,
+  AlertTriangle,
   HelpCircle,
   ExternalLink,
   ChevronDown,
@@ -61,6 +62,7 @@ import { smartRemoveBackground, optimizeImageForUpload } from '../../utils/image
 import { synthesizeCommercialStudioScene, renderCompleteHeroSlotImage } from '../../utils/sceneSynthesizer';
 import { safeFetchJson } from '../../utils/apiUtils';
 import { ModelBinding } from '../../hooks/useModelBinding';
+import { describeModelFailure } from '../../utils/modelErrors';
 import { ModelConfigModal } from './ModelConfigModal';
 import { HeroSuiteMatrixBar } from './HeroSuiteMatrixBar';
 import { ImageQualityModal } from './ImageQualityModal';
@@ -98,6 +100,8 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
     setCustomImageConfig,
     denoisingStrength,
     setDenoisingStrength,
+    promptModelReady,
+    imageModelReady,
     promptModelRequest,
     imageModelRequest,
     markBindingRejected
@@ -113,6 +117,8 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
   }, [currentProduct]);
 
   const activeProductImage = productPhotos[activePhotoIndex] || productPhotos[0] || currentProduct.imageUrl;
+  const promptModelUsable = !modelRequired || promptModelReady;
+  const imageModelUsable = !modelRequired || imageModelReady;
 
   // Pre-processing Quality Validation State (Sharpness, Brightness, Resolution & Quality Score)
   const [qualityReport, setQualityReport] = useState<ImageQualityReport | null>(null);
@@ -227,6 +233,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
 
   // Analysis and Generation States
   const [isAnalyzingProduct, setIsAnalyzingProduct] = useState<boolean>(false);
+  const [isRewritingPrompt, setIsRewritingPrompt] = useState<boolean>(false);
   const [isGeneratingAiImage, setIsGeneratingAiImage] = useState<boolean>(false);
   const [aiSuggestions, setAiSuggestions] = useState<AiVisualAnalysisResult | null>(null);
   const [aiGeneratedBgUrl, setAiGeneratedBgUrl] = useState<string | null>(null);
@@ -236,7 +243,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
   const [isAutoMattingEnabled, setIsAutoMattingEnabled] = useState<boolean>(true);
   const [mattedProductImage, setMattedProductImage] = useState<string | null>(null);
   const [isMatting, setIsMatting] = useState<boolean>(false);
-  const [feedbackBanner, setFeedbackBanner] = useState<{ text: string; type: 'success' | 'info' } | null>(null);
+  const [feedbackBanner, setFeedbackBanner] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
 
   // Automatic smart background removal when active product photo changes
   useEffect(() => {
@@ -1217,7 +1224,16 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
 
   // Step 1: AI Visual Analysis (Using Real Photo & Selected Prompt Model)
   const handleAiAnalyzeProduct = async () => {
+    if (modelRequired && !promptModelReady) {
+      setFeedbackBanner({
+        text: '未绑定可用的提示词分析模型，请先在「模型与接口配置」中完成绑定与连接测试。',
+        type: 'error'
+      });
+      setIsModelModalOpen(true);
+      return;
+    }
     setIsAnalyzingProduct(true);
+    setFeedbackBanner(null);
     try {
       const optimizedImage = await optimizeImageForUpload(activeProductImage, 960);
 
@@ -1236,16 +1252,16 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
       }, 25000);
 
       const result = res.data;
-      if (result?.code === 'MODEL_REQUIRED') {
-        setFeedbackBanner({
-          text: result.error || '未绑定可用模型，请先在模型配置中完成绑定与连接测试。',
-          type: 'error'
-        });
-        setIsModelModalOpen(true);
-        markBindingRejected();
+      if (!result || !result.success || result.generationMode !== 'ai' || !result.data) {
+        const failure = describeModelFailure(res, '模型未返回可用的解析结果，请检查模型绑定后重试。');
+        setFeedbackBanner({ text: failure.message, type: 'error' });
+        if (failure.kind === 'model-required') {
+          markBindingRejected();
+          setIsModelModalOpen(true);
+        }
         return;
       }
-      if (result && result.success && result.data) {
+      {
         setAiSuggestions(result.data);
         
         // Dynamically update product name, category, and core selling points so they become the new keywords!
@@ -1293,10 +1309,63 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
         });
         fireSuccessConfetti();
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to analyze with AI:', err);
+      setFeedbackBanner({
+        text: `AI 解析请求失败：${err?.message || '未知错误'}。请检查模型端点与网络后重试。`,
+        type: 'error'
+      });
     } finally {
       setIsAnalyzingProduct(false);
+    }
+  };
+
+  // Asks the bound prompt model to author the prompt for the active slot.
+  const handleModelRewritePrompt = async () => {
+    if (modelRequired && !promptModelReady) {
+      setFeedbackBanner({
+        text: '未绑定可用的提示词分析模型，请先在「模型与接口配置」中完成绑定与连接测试。',
+        type: 'error'
+      });
+      setIsModelModalOpen(true);
+      return;
+    }
+    setIsRewritingPrompt(true);
+    setFeedbackBanner(null);
+    try {
+      const optimizedImage = await optimizeImageForUpload(activeProductImage, 800);
+      const outcome = await fetchMultimodalPlatformPrompt(
+        currentProduct,
+        selectedPlatform,
+        activeSuiteSlot,
+        selectedScene,
+        optimizedImage ? [optimizedImage] : [],
+        promptModelRequest
+      );
+
+      if (outcome.status !== 'ok') {
+        if (outcome.failure.kind === 'model-required') {
+          markBindingRejected();
+          setIsModelModalOpen(true);
+        }
+        setFeedbackBanner({ text: outcome.failure.message, type: 'error' });
+        return;
+      }
+
+      setAiCustomPrompt(outcome.result!.promptEn);
+      setAiCustomPromptCn(outcome.result!.promptCn);
+      if (outcome.result!.negativePrompt) setNegativePrompt(outcome.result!.negativePrompt);
+      setFeedbackBanner({
+        text: `提示词已由模型 ${promptModelRequest.modelName} 针对【${platformConfig.name}】当前槽位重写完成，请核对后再生图。`,
+        type: 'success'
+      });
+    } catch (error: any) {
+      setFeedbackBanner({
+        text: `提示词生成请求失败：${error?.message || '未知错误'}`,
+        type: 'error'
+      });
+    } finally {
+      setIsRewritingPrompt(false);
     }
   };
 
@@ -1351,6 +1420,13 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
         });
         setIsModelModalOpen(true);
         markBindingRejected();
+        return;
+      }
+      if (generation.data?.code === 'CUSTOM_ENDPOINT_FAILED' || generation.data?.code === 'MODEL_GENERATION_FAILED') {
+        setFeedbackBanner({
+          text: describeModelFailure({ ok: false, status: 502, data: generation.data }, '生图模型调用失败。').message,
+          type: 'error'
+        });
         return;
       }
 
@@ -2024,14 +2100,26 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
         <div className="lg:col-span-5 space-y-4">
           {/* Feedback Banner Notification */}
           {feedbackBanner && (
-            <div className="p-3 rounded-xl bg-emerald-950/80 border border-emerald-500/80 text-emerald-200 text-xs flex items-center justify-between shadow-lg animate-in fade-in slide-in-from-top-2">
-              <div className="flex items-center gap-2">
-                <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+            <div
+              role={feedbackBanner.type === 'error' ? 'alert' : 'status'}
+              className={`p-3 rounded-xl border text-xs flex items-start justify-between gap-2 shadow-lg animate-in fade-in slide-in-from-top-2 ${
+                feedbackBanner.type === 'error'
+                  ? 'bg-rose-950/80 border-rose-500/80 text-rose-200'
+                  : feedbackBanner.type === 'info'
+                    ? 'bg-amber-950/80 border-amber-500/70 text-amber-100'
+                    : 'bg-emerald-950/80 border-emerald-500/80 text-emerald-200'
+              }`}
+            >
+              <div className="flex items-start gap-2">
+                {feedbackBanner.type === 'error'
+                  ? <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
+                  : <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />}
                 <span className="font-semibold">{feedbackBanner.text}</span>
               </div>
               <button
                 onClick={() => setFeedbackBanner(null)}
-                className="text-emerald-400 hover:text-white p-0.5"
+                aria-label="关闭提示"
+                className="hover:text-white p-0.5 flex-shrink-0"
               >
                 ✕
               </button>
@@ -2218,13 +2306,24 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
                 <button
                   onClick={() => {
                     syncPlatformProductPrompt(currentProduct, selectedPlatform, activeSuiteSlot);
-                    fireSuccessConfetti();
                   }}
-                  title="根据当前所选商品与平台规范重新生成提示词"
+                  title="用本地规则模板按当前商品与平台重置提示词（不调用模型）"
                   className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-medium transition-all flex items-center gap-1.5 whitespace-nowrap shadow-sm"
                 >
                   <RefreshCw className="w-3.5 h-3.5 text-amber-400" />
-                  产品+平台动态重置
+                  本地模板重置
+                </button>
+
+                <button
+                  onClick={handleModelRewritePrompt}
+                  disabled={isRewritingPrompt || isAnalyzingProduct}
+                  title={promptModelUsable
+                    ? `用已绑定的提示词模型 ${promptModelRequest.modelName} 重写当前槽位提示词`
+                    : '未绑定可用的提示词分析模型'}
+                  className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-medium transition-all flex items-center gap-1.5 whitespace-nowrap shadow-sm disabled:opacity-50"
+                >
+                  <Wand2 className={`w-3.5 h-3.5 text-purple-300 ${isRewritingPrompt ? 'animate-pulse' : ''}`} />
+                  {isRewritingPrompt ? '模型重写中...' : '模型重写提示词'}
                 </button>
 
                 <button

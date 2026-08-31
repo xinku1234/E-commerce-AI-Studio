@@ -2,6 +2,8 @@ import type { ResolvedImagePart } from './imageInput';
 import { getGeminiClient } from './gemini';
 import { buildEcommerceImagePrompt } from './prompts';
 import { validateRequestUrl } from '../security';
+import { isEndpointVerified } from './verifiedEndpoints';
+import { joinOpenAiPath } from './openAiCompatible';
 
 export interface ImageGenerationRequest {
   prompt: string;
@@ -26,8 +28,12 @@ export interface ImageGenerationResult {
 
 export async function generateProductImage(request: ImageGenerationRequest): Promise<ImageGenerationResult> {
   const providerErrors: Array<{ provider: string; message: string }> = [];
+  const customEndpoint = request.customEndpointUrl?.trim();
+  // A verified custom endpoint is the binding the user chose; falling through to
+  // another provider would report failures against a provider they never picked.
+  const useCustomOnly = Boolean(customEndpoint && isEndpointVerified(customEndpoint));
 
-  if (request.customEndpointUrl?.trim()) {
+  if (customEndpoint) {
     try {
       const customResult = await generateWithOpenAiCompatible(request);
       if (customResult.imageUrl) return { ...customResult, providerErrors };
@@ -37,37 +43,38 @@ export async function generateProductImage(request: ImageGenerationRequest): Pro
     }
   }
 
-  const gemini = getGeminiClient();
-  if (gemini) {
-    try {
-      const geminiResult = await generateWithGemini(request);
-      if (geminiResult.imageUrl) return { ...geminiResult, providerErrors };
-      providerErrors.push({ provider: 'gemini', message: 'Gemini 响应中没有可用图片' });
-    } catch (error: any) {
-      providerErrors.push({ provider: 'gemini', message: error?.message || 'Gemini 图片生成失败' });
+  if (!useCustomOnly) {
+    const gemini = getGeminiClient();
+    if (gemini) {
+      try {
+        const geminiResult = await generateWithGemini(request);
+        if (geminiResult.imageUrl) return { ...geminiResult, providerErrors };
+        providerErrors.push({ provider: 'gemini', message: 'Gemini 响应中没有可用图片' });
+      } catch (error: any) {
+        providerErrors.push({ provider: 'gemini', message: error?.message || 'Gemini 图片生成失败' });
+      }
+    } else {
+      providerErrors.push({ provider: 'gemini', message: 'GEMINI_API_KEY 未配置' });
     }
-  } else {
-    providerErrors.push({ provider: 'gemini', message: 'GEMINI_API_KEY 未配置' });
   }
 
+  const boundFailure = providerErrors.find((entry) => entry.provider === 'custom-openai-compatible');
   return {
     provider: 'procedural',
     modelUsed: 'procedural-studio',
     imageUrl: null,
     isRealAiImage: false,
     useProceduralStudio: true,
-    fallbackReason: providerErrors.at(-1)?.message || '没有可用的 AI 图片 Provider',
+    fallbackReason: (boundFailure || providerErrors.at(-1))?.message || '没有可用的 AI 图片 Provider',
     providerErrors
   };
 }
 
 async function generateWithOpenAiCompatible(request: ImageGenerationRequest): Promise<ImageGenerationResult> {
-  let endpoint = validateRequestUrl(request.customEndpointUrl, '自定义接口地址');
-  if (!endpoint.endsWith('/images/generations') && !endpoint.endsWith('/generate')) {
-    endpoint = endpoint.endsWith('/v1') ? `${endpoint}/images/generations` : `${endpoint}/v1/images/generations`;
-  }
+  const baseUrl = validateRequestUrl(request.customEndpointUrl, '自定义接口地址');
+  const endpoint = baseUrl.endsWith('/generate') ? baseUrl : joinOpenAiPath(baseUrl, 'images/generations');
 
-  const model = request.imageModel === 'custom-image-engine'
+  const model = request.imageModel === 'custom-image-engine' || request.imageModel.startsWith('gemini-')
     ? 'black-forest-labs/FLUX.1-schnell'
     : request.imageModel;
   const response = await fetch(endpoint, {
@@ -95,7 +102,7 @@ async function generateWithOpenAiCompatible(request: ImageGenerationRequest): Pr
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new Error(`自定义接口返回 HTTP ${response.status}${detail ? `: ${detail.slice(0, 180)}` : ''}`);
+    throw new Error(`自定义生图端点 ${endpoint}（模型 ${model}）返回 HTTP ${response.status}${detail ? `：${detail.replace(/\s+/g, ' ').slice(0, 220)}` : ''}`);
   }
 
   const data: any = await response.json();

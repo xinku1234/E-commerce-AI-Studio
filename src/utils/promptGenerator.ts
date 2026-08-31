@@ -1,4 +1,10 @@
 import { ProductItem, PlatformId, HeroSuiteSlot } from '../types';
+import { safeFetchJson } from './apiUtils';
+import { ModelFailure, describeModelFailure } from './modelErrors';
+
+export type PromptGenerationOutcome =
+  | { status: 'ok'; result: GeneratedPromptResult; failure?: undefined }
+  | { status: 'failed'; failure: ModelFailure; result?: undefined };
 
 export interface GeneratedPromptResult {
   promptEn: string;
@@ -288,63 +294,67 @@ export function generatePlatformProductPrompt(
 }
 
 /**
- * Calls the backend multimodal Gemini prompt generator using all multi-angle reference photos
- * and falls back to deterministic platform heuristics if backend is unreachable.
+ * Asks the backend prompt generator for a model-authored prompt, using the model
+ * the user bound in the UI. A failure is returned to the caller instead of being
+ * papered over with local heuristics, so the UI can report what actually broke.
  */
 export async function fetchMultimodalPlatformPrompt(
   product: ProductItem,
   platformId: PlatformId = 'taobao',
   slotType: HeroSuiteSlot = 'slot_1_ctr',
   sceneStyleId?: string,
-  images?: string[]
-): Promise<GeneratedPromptResult> {
-  const fallback = generatePlatformProductPrompt(product, platformId, slotType, sceneStyleId);
-  try {
-    const candidateImages = (images && images.length > 0) ? images : (product.images || [product.imageUrl]).filter(Boolean);
-    const platformNames: Record<string, string> = {
-      taobao: '淘宝 / 天猫',
-      jd: '京东',
-      douyin: '抖音',
-      '1688': '1688 (源头工厂/批发)',
-      pinduoduo: '拼多多',
-      xiaohongshu: '小红书',
-      amazon: '亚马逊 (Amazon)'
-    };
+  images?: string[],
+  modelRequest?: { modelName: string; customEndpointUrl?: string; customApiKey?: string }
+): Promise<PromptGenerationOutcome> {
+  const localBaseline = generatePlatformProductPrompt(product, platformId, slotType, sceneStyleId);
+  const candidateImages = (images && images.length > 0) ? images : (product.images || [product.imageUrl]).filter(Boolean);
+  const platformNames: Record<string, string> = {
+    taobao: '淘宝 / 天猫',
+    jd: '京东',
+    douyin: '抖音',
+    '1688': '1688 (源头工厂/批发)',
+    pinduoduo: '拼多多',
+    xiaohongshu: '小红书',
+    amazon: '亚马逊 (Amazon)'
+  };
 
-    const res = await fetch('/api/generate-multimodal-platform-prompt', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        productName: product.name,
-        category: product.category,
-        targetPlatform: platformNames[platformId] || platformId,
-        sceneStyle: sceneStyleId,
-        activeSlot: slotType,
-        images: candidateImages.slice(0, 6),
-        sellingPoints: product.sellingPoints
-      })
-    });
+  const res = await safeFetchJson('/api/generate-multimodal-platform-prompt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      productName: product.name,
+      category: product.category,
+      targetPlatform: platformNames[platformId] || platformId,
+      sceneStyle: sceneStyleId,
+      slot: slotType,
+      images: candidateImages.slice(0, 4),
+      sellingPoints: product.sellingPoints,
+      specs: product.specs,
+      promptModel: modelRequest?.modelName,
+      customEndpointUrl: modelRequest?.customEndpointUrl,
+      customApiKey: modelRequest?.customApiKey
+    })
+  }, 45000);
 
-    if (res.ok) {
-      const json = await res.json();
-      if (json && json.success && json.data) {
-        const d = json.data;
-        return {
-          promptEn: d.promptEn || fallback.promptEn,
-          promptCn: d.promptCn || fallback.promptCn,
-          lightingMood: d.lightingMood || fallback.lightingMood,
-          compositionTip: d.compositionTip || fallback.compositionTip,
-          visualTip: d.visualTip || fallback.visualTip,
-          materials: (d.materialsDetected && d.materialsDetected.length > 0) ? d.materialsDetected : fallback.materials,
-          colorScheme: d.colorScheme || fallback.colorScheme,
-          aspectRatio: d.aspectRatio || fallback.aspectRatio,
-          negativePrompt: d.negativePrompt || fallback.negativePrompt,
-          tags: (d.recommendedTags && d.recommendedTags.length > 0) ? d.recommendedTags : fallback.tags
-        };
-      }
-    }
-  } catch (err) {
-    console.warn('Multimodal prompt fetch fallback:', err);
+  const json: any = res.data;
+  if (!res.ok || !json?.success || !json?.data) {
+    return { status: 'failed', failure: describeModelFailure(res, '提示词生成失败，请检查模型绑定后重试。') };
   }
-  return fallback;
+
+  const d = json.data;
+  return {
+    status: 'ok',
+    result: {
+      promptEn: d.promptEn || localBaseline.promptEn,
+      promptCn: d.promptCn || localBaseline.promptCn,
+      lightingMood: d.platformStrategy?.lightingDesign || d.lightingMood || localBaseline.lightingMood,
+      compositionTip: d.platformStrategy?.cameraAngle || d.compositionTip || localBaseline.compositionTip,
+      visualTip: d.platformStrategy?.conversionKey || d.visualTip || localBaseline.visualTip,
+      materials: (d.recognizedProduct?.detectedMaterials?.length ? d.recognizedProduct.detectedMaterials : (d.materialsDetected?.length ? d.materialsDetected : localBaseline.materials)),
+      colorScheme: (d.recognizedProduct?.colors?.length ? d.recognizedProduct.colors.join(' / ') : (d.colorScheme || localBaseline.colorScheme)),
+      aspectRatio: d.aspectRatio || localBaseline.aspectRatio,
+      negativePrompt: d.negativePrompt || localBaseline.negativePrompt,
+      tags: (d.recommendedTags && d.recommendedTags.length > 0) ? d.recommendedTags : localBaseline.tags
+    }
+  };
 }
