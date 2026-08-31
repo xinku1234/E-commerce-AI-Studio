@@ -292,3 +292,88 @@ test('selling point extraction refuses to fake results when the model gate rejec
   // The old behaviour silently填充 placeholder points; that must not happen now.
   await expect(page.getByText('待商家核对')).toHaveCount(0);
 });
+
+test('duplicate module ids from the model cannot break the detail page list', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => {
+    if (!/websocket|vite.*connect|closed without opened/i.test(error.message)) pageErrors.push(error.message);
+  });
+  const keyWarnings: string[] = [];
+  page.on('console', (message) => {
+    if (/same key/i.test(message.text())) keyWarnings.push(message.text());
+  });
+
+  const duplicate = (title: string, type: string) => ({
+    id: 'same-id',
+    type,
+    title,
+    enabled: true,
+    tag: '标签',
+    headline: title,
+    subheadline: '副标题',
+    bullets: ['要点一', '要点二'],
+    specs: [],
+    content: '内容'
+  });
+
+  await page.route('**/api/generate-detail-page-modules', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        generationMode: 'ai',
+        modules: [
+          duplicate('重复模块甲', 'hero'),
+          duplicate('重复模块乙', 'features'),
+          duplicate('重复模块丙', 'specs')
+        ]
+      })
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: /详情页长图工坊/ }).click();
+  await page.getByRole('button', { name: 'AI 一键生成完整详情页' }).click();
+  await expect(page.getByText('模块编排 (3)')).toBeVisible();
+
+  // Reordering a keyed list is where duplicate keys corrupt the DOM.
+  const moveDown = page.locator('button:has(svg.lucide-move-down)');
+  await moveDown.first().click();
+  await moveDown.nth(1).click();
+  await moveDown.first().click();
+
+  await expect(page.getByText('界面渲染出错')).toHaveCount(0);
+  await expect(page.getByText('该工作区加载失败')).toHaveCount(0);
+  expect(keyWarnings).toEqual([]);
+  expect(pageErrors).toEqual([]);
+});
+
+test('a DOM desync caused by outside mutation recovers instead of showing an error card', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByText('智能主图工坊')).toBeVisible();
+
+  // Emulate a translation-style extension detaching a React-managed node, then
+  // force a re-render of the same subtree.
+  await page.evaluate(() => {
+    const heading = document.querySelector('main h2, main h1, main span');
+    heading?.parentElement?.removeChild(heading);
+  });
+  await page.getByRole('button', { name: /详情页长图工坊/ }).click();
+  await expect(page.getByText('智能详情页长图工坊')).toBeVisible();
+  await page.getByRole('button', { name: /智能主图工坊|主图工坊/ }).first().click();
+
+  await expect(page.getByText('智能主图工坊')).toBeVisible();
+  await expect(page.getByText('界面渲染出错')).toHaveCount(0);
+});
+
+test('one broken workspace keeps the navigation and other workspaces usable', async ({ page }) => {
+  await page.goto('/');
+  // Make the lazy chunk request fail so the detail workspace cannot mount.
+  await page.route('**/DetailPageStudio*', (route) => route.abort());
+  await page.getByRole('button', { name: /详情页长图工坊/ }).click();
+
+  await expect(page.getByText('详情页工作台加载失败')).toBeVisible();
+  // Navigation still works, and the hero workspace still renders.
+  await page.getByRole('button', { name: /批量矩阵生成/ }).click();
+  await expect(page.getByText('批量多平台矩阵生成引擎')).toBeVisible();
+});

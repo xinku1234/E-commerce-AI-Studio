@@ -55,6 +55,7 @@ import {
 } from '../../data/presets';
 import { generatePlatformProductPrompt, fetchMultimodalPlatformPrompt } from '../../utils/promptGenerator';
 import { exportCanvasAsImage, packageAndDownloadZip, fireSuccessConfetti } from '../../utils/exportUtils';
+import { uniqueId } from '../../utils/uniqueId';
 import { analyzeImageQuality, validateEcommerceOutput } from '../../utils/imageQuality';
 import { smartRemoveBackground, optimizeImageForUpload } from '../../utils/imageMatting';
 import { synthesizeCommercialStudioScene, renderCompleteHeroSlotImage } from '../../utils/sceneSynthesizer';
@@ -1530,7 +1531,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
     if (canvasRef.current) {
       const dataUrl = canvasRef.current.toDataURL('image/png', 0.92);
       onAddToBatch({
-        id: `task_${Date.now()}`,
+        id: uniqueId('task'),
         productId: currentProduct.id,
         productName: currentProduct.name,
         productImage: currentProduct.imageUrl,
@@ -1732,7 +1733,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
     heroSuite.forEach(slot => {
       if (slot.imageUrl || (canvasRef.current && activeSuiteSlot === slot.slot)) {
         onAddToBatch({
-          id: `task_suite_${slot.slot}_${Date.now()}_${Math.random()}`,
+          id: uniqueId(`task_suite_${slot.slot}`),
           productId: currentProduct.id,
           productName: `${currentProduct.name} - ${slot.slotShortName}`,
           productImage: currentProduct.imageUrl,
@@ -2621,8 +2622,8 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
                 <span className="text-slate-200 font-medium">底部营销腰封</span>
               </label>
 
-              <label className="flex items-center justify-between cursor-pointer bg-slate-950 p-2.5 rounded-xl border border-slate-800 hover:border-slate-700">
-                <div className="flex items-center gap-2">
+              <div className="flex items-center justify-between bg-slate-950 p-2.5 rounded-xl border border-slate-800 hover:border-slate-700">
+                <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={showBadge && selectedBadge !== 'none'}
@@ -2636,13 +2637,13 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
                     className="rounded text-rose-500 focus:ring-0 bg-slate-900 border-slate-700"
                   />
                   <span className="text-slate-200 font-medium">认证/营销角标</span>
-                </div>
+                </label>
                 <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
                   showBadge && selectedBadge !== 'none' ? 'bg-amber-950/80 text-amber-300 border border-amber-800/60' : 'bg-slate-900 text-slate-500'
                 }`}>
                   {showBadge && selectedBadge !== 'none' ? (selectedBadge === 'custom' ? '自定义' : '已开启') : '已关闭'}
                 </span>
-              </label>
+              </div>
             </div>
 
             {/* Badge Configuration Panel (Only shown if enabled) */}

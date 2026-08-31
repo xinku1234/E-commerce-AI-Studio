@@ -20,6 +20,7 @@ import { SAMPLE_PRODUCTS } from '../data/presets';
 import { safeFetchJson } from '../utils/apiUtils';
 import { optimizeImageForUpload } from '../utils/imageMatting';
 import { ModelBinding } from '../hooks/useModelBinding';
+import { uniqueId } from '../utils/uniqueId';
 
 interface ProductModalProps {
   isOpen: boolean;
@@ -276,7 +277,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
     const allImgs = customImages;
 
     const newProd: ProductItem = {
-      id: `custom_prod_${Date.now()}`,
+      id: uniqueId('custom_prod'),
       name: customName.trim(),
       category: customCategory.trim(),
       price: customPrice.trim(),
@@ -476,9 +477,9 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                 >
                   {customImages.length === 0 ? (
                     <label className="flex flex-col items-center justify-center h-44 cursor-pointer">
-                      <div className="p-3 rounded-2xl bg-slate-800 border border-slate-700 text-rose-400 mb-2 shadow-inner">
+                      <span className="inline-flex p-3 rounded-2xl bg-slate-800 border border-slate-700 text-rose-400 mb-2 shadow-inner">
                         <Upload className="w-6 h-6" />
-                      </div>
+                      </span>
                       <span className="text-xs font-bold text-slate-200">点击批量选择多张实拍图，或将多张图片拖拽到此处</span>
                       <span className="text-[10px] text-slate-400 mt-1">支持 1~10 张 PNG、JPG、WebP 图片，单张不超过 8 MB</span>
                       <input

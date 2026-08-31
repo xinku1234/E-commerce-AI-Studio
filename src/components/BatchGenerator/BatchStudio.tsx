@@ -15,6 +15,7 @@ import {
 import { BatchTask, ProductItem, PlatformId } from '../../types';
 import { PLATFORMS_DATA, SAMPLE_PRODUCTS, SCENE_STYLES } from '../../data/presets';
 import { packageAndDownloadZip, fireSuccessConfetti } from '../../utils/exportUtils';
+import { uniqueId } from '../../utils/uniqueId';
 import { safeFetchJson } from '../../utils/apiUtils';
 import { synthesizeCommercialStudioScene, renderCompleteHeroSlotImage } from '../../utils/sceneSynthesizer';
 import { validateEcommerceOutput } from '../../utils/imageQuality';
@@ -50,7 +51,7 @@ export const BatchStudio: React.FC<BatchStudioProps> = ({
       selectedPlatforms.forEach((platId) => {
         const plat = PLATFORMS_DATA.find(p => p.id === platId) || PLATFORMS_DATA[0];
         newTasks.push({
-          id: `batch_${Date.now()}_${pId}_${platId}`,
+          id: uniqueId(`batch_${pId}_${platId}`),
           productId: prod.id,
           productName: prod.name,
           productImage: prod.imageUrl,

@@ -996,7 +996,16 @@ app.post("/api/generate-detail-page-modules", async (req, res) => {
     const parsed = JSON.parse(response.text?.trim() || "{}");
     const modules = Array.isArray(parsed) ? parsed : parsed.modules;
     if (!Array.isArray(modules) || modules.length === 0) throw new Error("模型未返回有效详情页模块");
-    return res.json({ success: true, generationMode: "ai", modules });
+    // Models happily repeat the same module id; the client keys a reorderable
+    // list by it, so uniqueness is enforced before the payload leaves here.
+    const seenIds = new Set<string>();
+    const uniqueModules = modules.map((module: any, index: number) => {
+      const rawId = typeof module?.id === "string" ? module.id.trim() : "";
+      const id = rawId && !seenIds.has(rawId) ? rawId : `mod_${index}_${Math.random().toString(36).slice(2, 8)}`;
+      seenIds.add(id);
+      return { ...module, id };
+    });
+    return res.json({ success: true, generationMode: "ai", modules: uniqueModules });
   } catch (error: any) {
     console.error("Error generating detail page:", error);
     return res.json({

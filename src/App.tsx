@@ -11,6 +11,7 @@ import { ProductItem, BatchTask } from './types';
 import { SAMPLE_PRODUCTS } from './data/presets';
 import { createCompactProduct, loadStoredProduct, storeProduct } from './utils/productStorage';
 import { useModelBinding } from './hooks/useModelBinding';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 const DetailPageStudio = lazy(() => import('./components/DetailPageStudio/DetailPageStudio').then(module => ({ default: module.DetailPageStudio })));
 const BatchStudio = lazy(() => import('./components/BatchGenerator/BatchStudio').then(module => ({ default: module.BatchStudio })));
@@ -110,55 +111,71 @@ export default function App() {
 
       {/* Main Workspace View Switcher */}
       <main className="flex-1 pb-16">
+        {/* Each workspace gets its own boundary so one failing panel keeps the
+            navigation and the other workspaces usable. */}
         {activeTab === 'hero' && (
-          <HeroStudio
-            currentProduct={currentProduct}
-            onAddToBatch={handleAddToBatch}
-            onSyncToDetail={() => setActiveTab('detail')}
-            onOpenProductModal={() => setIsProductModalOpen(true)}
-            onUpdateProduct={(updated) => setCurrentProduct(updated)}
-            modelBinding={modelBinding}
-            modelConfigRequest={modelConfigRequest}
-          />
+          <ErrorBoundary variant="panel" label="主图工作台">
+            <HeroStudio
+              currentProduct={currentProduct}
+              onAddToBatch={handleAddToBatch}
+              onSyncToDetail={() => setActiveTab('detail')}
+              onOpenProductModal={() => setIsProductModalOpen(true)}
+              onUpdateProduct={(updated) => setCurrentProduct(updated)}
+              modelBinding={modelBinding}
+              modelConfigRequest={modelConfigRequest}
+            />
+          </ErrorBoundary>
         )}
 
-        <Suspense fallback={<WorkspaceLoading />}>
-          {activeTab === 'detail' && (
-            <DetailPageStudio
-              currentProduct={currentProduct}
-              onNavigateToPublish={() => setActiveTab('publish')}
-            />
-          )}
+        {activeTab === 'detail' && (
+          <ErrorBoundary variant="panel" label="详情页工作台">
+            <Suspense fallback={<WorkspaceLoading />}>
+              <DetailPageStudio
+                currentProduct={currentProduct}
+                onNavigateToPublish={() => setActiveTab('publish')}
+              />
+            </Suspense>
+          </ErrorBoundary>
+        )}
 
-          {activeTab === 'batch' && (
-            <BatchStudio
-              batchTasks={batchTasks}
-              onUpdateTasks={setBatchTasks}
-              onClearTasks={handleClearTasks}
-              currentProduct={currentProduct}
-              onNavigateToPublish={() => setActiveTab('publish')}
-            />
-          )}
+        {activeTab === 'batch' && (
+          <ErrorBoundary variant="panel" label="批量矩阵工作区">
+            <Suspense fallback={<WorkspaceLoading />}>
+              <BatchStudio
+                batchTasks={batchTasks}
+                onUpdateTasks={setBatchTasks}
+                onClearTasks={handleClearTasks}
+                currentProduct={currentProduct}
+                onNavigateToPublish={() => setActiveTab('publish')}
+              />
+            </Suspense>
+          </ErrorBoundary>
+        )}
 
-          {activeTab === 'publish' && (
-            <PublishHub currentProduct={currentProduct} />
-          )}
-        </Suspense>
+        {activeTab === 'publish' && (
+          <ErrorBoundary variant="panel" label="多渠道分发工作区">
+            <Suspense fallback={<WorkspaceLoading />}>
+              <PublishHub currentProduct={currentProduct} />
+            </Suspense>
+          </ErrorBoundary>
+        )}
       </main>
 
       {/* Product Selection & Upload Modal */}
-      <ProductModal
-        isOpen={isProductModalOpen}
-        onClose={() => setIsProductModalOpen(false)}
-        currentProduct={currentProduct}
-        onSelectProduct={(p) => setCurrentProduct(p)}
-        onSaveNewProduct={async (p) => {
-          await storeProduct(p);
-          setCurrentProduct(p);
-        }}
-        modelBinding={modelBinding}
-        onRequireModel={requestModelConfig}
-      />
+      <ErrorBoundary variant="panel" label="商品资料弹窗">
+        <ProductModal
+          isOpen={isProductModalOpen}
+          onClose={() => setIsProductModalOpen(false)}
+          currentProduct={currentProduct}
+          onSelectProduct={(p) => setCurrentProduct(p)}
+          onSaveNewProduct={async (p) => {
+            await storeProduct(p);
+            setCurrentProduct(p);
+          }}
+          modelBinding={modelBinding}
+          onRequireModel={requestModelConfig}
+        />
+      </ErrorBoundary>
     </div>
   );
 }

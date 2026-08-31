@@ -22,6 +22,7 @@ import { DEFAULT_DETAIL_MODULES } from '../../data/presets';
 import { packageAndDownloadZip, fireSuccessConfetti } from '../../utils/exportUtils';
 import { safeFetchJson } from '../../utils/apiUtils';
 import { renderFullDetailPageLongImage } from '../../utils/detailPageRenderer';
+import { withUniqueIds } from '../../utils/uniqueId';
 
 interface DetailPageStudioProps {
   currentProduct: ProductItem;
@@ -64,12 +65,14 @@ export const DetailPageStudio: React.FC<DetailPageStudioProps> = ({
 
       const data = res.data;
       if (data && data.success && data.modules?.length) {
-        setModules(data.modules.map((m: any, idx: number) => ({
-          ...m,
-          id: m.id || `mod_${idx}_${Date.now()}`,
-          enabled: true
-        })));
-        setActiveModuleId(data.modules[0].id || 'mod_hero');
+        // The model can echo the same module id twice; duplicate React keys in a
+        // reorderable list break reconciliation, so ids are re-minted here.
+        const nextModules = withUniqueIds<DetailPageModule>(
+          data.modules.map((m: any) => ({ ...m, enabled: true })),
+          'mod'
+        );
+        setModules(nextModules);
+        setActiveModuleId(nextModules[0].id);
         setGenerationNotice({
           type: data.generationMode === 'ai' ? 'ai' : 'fallback',
           text: data.generationMode === 'ai'
