@@ -19,6 +19,7 @@ import { ProductItem } from '../types';
 import { SAMPLE_PRODUCTS } from '../data/presets';
 import { safeFetchJson } from '../utils/apiUtils';
 import { optimizeImageForUpload } from '../utils/imageMatting';
+import { ModelBinding } from '../hooks/useModelBinding';
 
 interface ProductModalProps {
   isOpen: boolean;
@@ -26,6 +27,8 @@ interface ProductModalProps {
   currentProduct: ProductItem;
   onSelectProduct: (product: ProductItem) => void;
   onSaveNewProduct: (product: ProductItem) => void | Promise<void>;
+  modelBinding: ModelBinding;
+  onRequireModel?: () => void;
 }
 
 export const ProductModal: React.FC<ProductModalProps> = ({
@@ -33,8 +36,14 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   onClose,
   currentProduct,
   onSelectProduct,
-  onSaveNewProduct
+  onSaveNewProduct,
+  modelBinding,
+  onRequireModel
 }) => {
+  // Selling-point extraction is a prompt/analysis task, so it runs on the same
+  // prompt model binding as the hero studio instead of a private code path.
+  const { modelRequired, promptModelReady, promptModelRequest, markBindingRejected } = modelBinding;
+  const promptModelUsable = !modelRequired || promptModelReady;
   const [tab, setTab] = useState<'presets' | 'custom'>('presets');
   
   // Custom product state
@@ -50,6 +59,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   const [customPointInput, setCustomPointInput] = useState('');
   const [isExtractingAi, setIsExtractingAi] = useState(false);
   const [extractSuccessMsg, setExtractSuccessMsg] = useState<string | null>(null);
+  const [extractError, setExtractError] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -103,20 +113,24 @@ export const ProductModal: React.FC<ProductModalProps> = ({
 
   const handleAiSmartFill = async () => {
     const effectiveName = (customName && customName.trim() && customName !== '智能高品质商品') ? customName.trim() : '';
+
+    if (!promptModelUsable) {
+      setExtractError('未绑定可用的提示词分析模型，请先在「模型与接口配置」中完成绑定与连接测试。');
+      onRequireModel?.();
+      return;
+    }
+    if (customImages.length === 0) {
+      setExtractError('请先上传至少 1 张商品实拍图，AI 才能识别真实卖点。');
+      return;
+    }
+
     setIsExtractingAi(true);
     setExtractSuccessMsg(null);
-
-    // Fallback timer in case network is slow
-    const fallbackTimer = setTimeout(() => {
-      const fallbackList = getSafeFallbackPoints(effectiveName, customCategory);
-      setCustomSellingPoints(fallbackList);
-      setExtractSuccessMsg('AI 响应超时，已提供待核对的卖点填写框架。');
-      setIsExtractingAi(false);
-    }, 7000);
+    setExtractError(null);
 
     try {
       const rawImg = customImages[primaryImageIndex] || customImages[0] || '';
-      // Compress the product image to ~40KB so Gemini Vision receives the real photo instantly
+      // Compress the product image to ~40KB so vision models receive it quickly.
       const compressedImg = rawImg ? await optimizeImageForUpload(rawImg, 640) : '';
 
       const res = await safeFetchJson('/api/ai-analyze-product', {
@@ -125,37 +139,50 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         body: JSON.stringify({
           productName: effectiveName,
           category: customCategory,
-          imageBase64: compressedImg
+          imageBase64: compressedImg,
+          analysisModel: promptModelRequest.modelName,
+          customEndpointUrl: promptModelRequest.customEndpointUrl,
+          customApiKey: promptModelRequest.customApiKey
         })
-      }, 15000);
+      }, 25000);
 
-      clearTimeout(fallbackTimer);
       const data = res.data;
-      if (data && data.success && data.generationMode === 'ai' && data.data && data.data.coreSellingPoints?.length) {
+      if (data?.code === 'MODEL_REQUIRED') {
+        markBindingRejected();
+        setExtractError(data.error || '未绑定可用模型，请先完成模型绑定与连接测试。');
+        onRequireModel?.();
+        return;
+      }
+      if (data && data.success && data.generationMode === 'ai' && data.data?.coreSellingPoints?.length) {
         setCustomSellingPoints(data.data.coreSellingPoints);
         const identifiedName = data.data.productIdentified;
         if (identifiedName && (!customName || customName === '智能高品质商品' || customName.trim() === '')) {
           setCustomName(identifiedName);
         }
-        if (data.data.categoryIdentified && customCategory === '3C数码 / 生活美学') {
+        if (data.data.categoryIdentified && (!customCategory.trim() || customCategory === '3C数码 / 生活美学')) {
           setCustomCategory(data.data.categoryIdentified);
         }
-        setExtractSuccessMsg(`✨ AI 视觉识别完成：【${identifiedName || customName || '商品'}】已提炼 ${data.data.coreSellingPoints.length} 条专属核心卖点！`);
-      } else {
-        const fallbackList = getSafeFallbackPoints(effectiveName, customCategory);
-        setCustomSellingPoints(fallbackList);
-        setExtractSuccessMsg(data?.warning || '未获得真实 AI 识别结果，已提供待核对的卖点填写框架。');
+        setExtractSuccessMsg(`AI 视觉识别完成：【${identifiedName || customName || '商品'}】已提炼 ${data.data.coreSellingPoints.length} 条核心卖点，请核对后保存。`);
+        return;
       }
+      // No silent template fill: the model did not return a usable result, so
+      // say so and leave the list untouched.
+      setExtractError(data?.warning || res.error || '模型未返回可用的识别结果，请检查模型绑定或稍后重试。');
     } catch (e) {
-      clearTimeout(fallbackTimer);
-      console.warn('AI smart fill network fallback:', e);
-      const fallbackList = getSafeFallbackPoints(effectiveName, customCategory);
-      setCustomSellingPoints(fallbackList);
-      setExtractSuccessMsg('AI 请求失败，已提供待核对的卖点填写框架。');
+      console.warn('AI selling point extraction failed:', e);
+      setExtractError('AI 请求失败，请检查模型绑定与网络后重试。');
     } finally {
       setIsExtractingAi(false);
-      setTimeout(() => setExtractSuccessMsg(null), 5000);
     }
+  };
+
+  const handleFillManualFramework = () => {
+    setCustomSellingPoints(getSafeFallbackPoints(
+      (customName && customName.trim() && customName !== '智能高品质商品') ? customName.trim() : '',
+      customCategory
+    ));
+    setExtractError(null);
+    setExtractSuccessMsg('已填入待核对的卖点框架，请按实物逐条替换为真实信息。');
   };
 
   const processFiles = (files: FileList | File[]) => {
@@ -617,23 +644,50 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                         {customSellingPoints.length}条
                       </span>
                     </label>
-                    <button
-                      type="button"
-                      onClick={handleAiSmartFill}
-                      disabled={isExtractingAi}
-                      className="text-[11px] px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold flex items-center gap-1.5 shadow-sm transition-all disabled:opacity-70 cursor-pointer active:scale-95"
-                    >
-                      <Sparkles className={`w-3.5 h-3.5 ${isExtractingAi ? 'animate-spin text-purple-200' : 'text-yellow-300'}`} />
-                      <span>{isExtractingAi ? 'AI 正在智能提炼...' : 'AI 一键提炼卖点'}</span>
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleFillManualFramework}
+                        className="text-[11px] px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-medium transition-colors cursor-pointer"
+                        title="不调用模型，仅填入需要手工核对的卖点框架"
+                      >
+                        填入手填框架
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleAiSmartFill}
+                        disabled={isExtractingAi || !promptModelUsable}
+                        title={promptModelUsable
+                          ? `使用已绑定的提示词分析模型: ${promptModelRequest.modelName}`
+                          : '未绑定可用的提示词分析模型，请先在模型与接口配置中完成绑定'}
+                        className="text-[11px] px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold flex items-center gap-1.5 shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer active:scale-95"
+                      >
+                        <Sparkles className={`w-3.5 h-3.5 ${isExtractingAi ? 'animate-spin text-purple-200' : 'text-yellow-300'}`} />
+                        <span>{isExtractingAi ? 'AI 正在智能提炼...' : 'AI 一键提炼卖点'}</span>
+                      </button>
+                    </div>
                   </div>
 
-                   {extractSuccessMsg && (
-                     <div className="p-2 rounded-lg bg-amber-950/80 border border-amber-600/60 text-amber-200 text-[11px] flex items-center gap-1.5 animate-fadeIn">
+                  <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                    <Sparkles className="w-3 h-3 text-purple-400 flex-shrink-0" />
+                    <span>
+                      提炼卖点使用与主图工坊相同的提示词分析模型:
+                      <strong className="ml-1 font-mono text-purple-300" data-testid="selling-point-model">{promptModelRequest.modelName}</strong>
+                      {!promptModelUsable && <span className="ml-1 text-amber-300">(未绑定)</span>}
+                    </span>
+                  </div>
+
+                  {extractSuccessMsg && (
+                    <div className="p-2 rounded-lg bg-emerald-950/70 border border-emerald-700/60 text-emerald-200 text-[11px] flex items-center gap-1.5 animate-fadeIn">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
                       <span>{extractSuccessMsg}</span>
                     </div>
-                   )}
+                  )}
+                  {extractError && (
+                    <div className="p-2 rounded-lg bg-rose-950/80 border border-rose-600/60 text-rose-200 text-[11px] flex items-start gap-1.5 animate-fadeIn" role="alert">
+                      <span>{extractError}</span>
+                    </div>
+                  )}
                    {uploadError && <div className="p-2 rounded-lg bg-rose-950/80 border border-rose-600/60 text-rose-200 text-[11px]">{uploadError}</div>}
 
                   <div className="flex gap-2">

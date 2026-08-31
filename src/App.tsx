@@ -10,6 +10,7 @@ import { HeroStudio } from './components/HeroImageStudio/HeroStudio';
 import { ProductItem, BatchTask } from './types';
 import { SAMPLE_PRODUCTS } from './data/presets';
 import { createCompactProduct, loadStoredProduct, storeProduct } from './utils/productStorage';
+import { useModelBinding } from './hooks/useModelBinding';
 
 const DetailPageStudio = lazy(() => import('./components/DetailPageStudio/DetailPageStudio').then(module => ({ default: module.DetailPageStudio })));
 const BatchStudio = lazy(() => import('./components/BatchGenerator/BatchStudio').then(module => ({ default: module.BatchStudio })));
@@ -33,32 +34,12 @@ export default function App() {
   });
   const [isProductModalOpen, setIsProductModalOpen] = useState<boolean>(false);
   const [hasLoadedStoredProduct, setHasLoadedStoredProduct] = useState(false);
-  const [modelRequired, setModelRequired] = useState(true);
-  const [serverModelReady, setServerModelReady] = useState(false);
-  // Keep the workspace locked until the server confirms a usable model.
-  const [modelReady, setModelReady] = useState(false);
-  const [healthResolved, setHealthResolved] = useState(false);
   const [modelConfigRequest, setModelConfigRequest] = useState(0);
-
-  useEffect(() => {
-    fetch('/api/health')
-      .then(response => response.json())
-      .then(data => {
-        setModelRequired(data.modelRequired !== false);
-        // Only a configured server-side Gemini key unlocks the built-in presets;
-        // custom endpoints unlock separately after their own connection test.
-        setServerModelReady(Boolean(data.ai?.gemini?.configured));
-        if (data.modelRequired !== false && !data.modelReady) setModelReady(false);
-      })
-      .catch(() => {
-        setModelRequired(true);
-        setServerModelReady(false);
-        setModelReady(false);
-      })
-      .finally(() => {
-        setHealthResolved(true);
-      });
-  }, []);
+  // One binding shared by every workspace, so the prompt model configured once
+  // is the model each AI call uses. The workspace stays locked until the server
+  // confirms a usable model.
+  const modelBinding = useModelBinding();
+  const requestModelConfig = () => setModelConfigRequest(value => value + 1);
   
   const [batchTasks, setBatchTasks] = useState<BatchTask[]>(() => {
     try {
@@ -123,8 +104,8 @@ export default function App() {
         currentProduct={currentProduct}
         onOpenProductModal={() => setIsProductModalOpen(true)}
         batchCount={batchTasks.length}
-        modelReady={modelReady}
-        onRequireModel={() => setModelConfigRequest(value => value + 1)}
+        modelReady={modelBinding.modelReady}
+        onRequireModel={requestModelConfig}
       />
 
       {/* Main Workspace View Switcher */}
@@ -136,9 +117,7 @@ export default function App() {
             onSyncToDetail={() => setActiveTab('detail')}
             onOpenProductModal={() => setIsProductModalOpen(true)}
             onUpdateProduct={(updated) => setCurrentProduct(updated)}
-            modelRequired={healthResolved && modelRequired}
-            serverModelReady={serverModelReady}
-            onModelStatusChange={setModelReady}
+            modelBinding={modelBinding}
             modelConfigRequest={modelConfigRequest}
           />
         )}
@@ -177,6 +156,8 @@ export default function App() {
           await storeProduct(p);
           setCurrentProduct(p);
         }}
+        modelBinding={modelBinding}
+        onRequireModel={requestModelConfig}
       />
     </div>
   );

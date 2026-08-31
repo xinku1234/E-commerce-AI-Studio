@@ -114,7 +114,9 @@ npm start
 
 ## 模型配置
 
-默认服务端读取 `GEMINI_API_KEY`。主图工作台还支持在界面中配置 OpenAI Compatible 文本模型和图片模型接口。
+默认服务端读取 `GEMINI_API_KEY`。「模型与接口配置」还支持在界面中配置 OpenAI Compatible 的提示词分析模型和生图模型接口。
+
+绑定是全局共享的：提示词分析模型一处配置，主图工坊的视觉解析、商品弹窗的「AI 一键提炼卖点」都会使用同一个模型与端点，不存在各自独立的模型设置。未绑定时相关按钮不可用，服务端也会返回 `503` + `MODEL_REQUIRED`，前端不会静默降级为模板内容。需要手工填写的卖点框架改由「填入手填框架」按钮显式触发。
 
 使用自定义接口时请注意：
 
@@ -150,6 +152,8 @@ npm start
 │   │   ├── PublishHub/
 │   │   └── ErrorBoundary.tsx
 │   ├── data/
+│   ├── hooks/
+│   │   └── useModelBinding.ts
 │   ├── utils/
 │   ├── App.tsx
 │   └── types.ts

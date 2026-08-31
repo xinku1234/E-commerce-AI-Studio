@@ -59,11 +59,7 @@ import { analyzeImageQuality, validateEcommerceOutput } from '../../utils/imageQ
 import { smartRemoveBackground, optimizeImageForUpload } from '../../utils/imageMatting';
 import { synthesizeCommercialStudioScene, renderCompleteHeroSlotImage } from '../../utils/sceneSynthesizer';
 import { safeFetchJson } from '../../utils/apiUtils';
-import {
-  DEFAULT_IMAGE_ENDPOINT_CONFIG,
-  DEFAULT_PROMPT_ENDPOINT_CONFIG,
-  readStoredEndpointConfig
-} from '../../utils/modelConfig';
+import { ModelBinding } from '../../hooks/useModelBinding';
 import { ModelConfigModal } from './ModelConfigModal';
 import { HeroSuiteMatrixBar } from './HeroSuiteMatrixBar';
 import { ImageQualityModal } from './ImageQualityModal';
@@ -74,9 +70,7 @@ interface HeroStudioProps {
   onSyncToDetail: () => void;
   onOpenProductModal?: () => void;
   onUpdateProduct?: (product: ProductItem) => void;
-  modelRequired?: boolean;
-  serverModelReady?: boolean;
-  onModelStatusChange?: (ready: boolean) => void;
+  modelBinding: ModelBinding;
   modelConfigRequest?: number;
 }
 
@@ -86,11 +80,27 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
   onSyncToDetail,
   onOpenProductModal,
   onUpdateProduct
-  , modelRequired = true
-  , serverModelReady = false
-  , onModelStatusChange
+  , modelBinding
   , modelConfigRequest = 0
 }) => {
+  const {
+    modelRequired,
+    serverModelReady,
+    modelReady,
+    selectedPromptModel,
+    setSelectedPromptModel,
+    selectedImageModel,
+    setSelectedImageModel,
+    customPromptConfig,
+    setCustomPromptConfig,
+    customImageConfig,
+    setCustomImageConfig,
+    denoisingStrength,
+    setDenoisingStrength,
+    promptModelRequest,
+    imageModelRequest,
+    markBindingRejected
+  } = modelBinding;
   // Multi-angle Real Product Photos State
   const [activePhotoIndex, setActivePhotoIndex] = useState<number>(0);
 
@@ -194,39 +204,13 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
     });
   };
 
-  // AI Models Configuration (Prompt LLM & Image Engine with Custom Endpoint and Model Selection)
-  const [selectedPromptModel, setSelectedPromptModel] = useState<string>(() => {
-    return localStorage.getItem('SELECTED_PROMPT_MODEL') || 'gemini-3.7-flash';
-  });
-  const [selectedImageModel, setSelectedImageModel] = useState<string>(() => {
-    return localStorage.getItem('SELECTED_IMAGE_MODEL') || 'gemini-3.1-flash-image';
-  });
-
-  const [customPromptConfig, setCustomPromptConfig] = useState<CustomEndpointConfig>(
-    () => readStoredEndpointConfig('CUSTOM_PROMPT_CONFIG', DEFAULT_PROMPT_ENDPOINT_CONFIG)
-  );
-
-  const [customImageConfig, setCustomImageConfig] = useState<CustomEndpointConfig>(
-    () => readStoredEndpointConfig('CUSTOM_IMAGE_CONFIG', DEFAULT_IMAGE_ENDPOINT_CONFIG)
-  );
-
-  const [denoisingStrength, setDenoisingStrength] = useState<number>(0.65);
   const [isModelModalOpen, setIsModelModalOpen] = useState<boolean>(false);
   const [aiCompositeMode, setAiCompositeMode] = useState<'ai_full_render' | 'ai_stage_overlay'>('ai_full_render');
   const [isRealAiGenerated, setIsRealAiGenerated] = useState<boolean>(false);
 
-  const promptModelReady = selectedPromptModel !== 'custom-prompt-model'
-    ? serverModelReady
-    : customPromptConfig.testStatus === 'success';
-  const imageModelReady = selectedImageModel !== 'custom-image-engine'
-    ? serverModelReady
-    : customImageConfig.testStatus === 'success';
-  const modelReady = !modelRequired || (promptModelReady && imageModelReady);
-
   useEffect(() => {
-    onModelStatusChange?.(modelReady);
     if (modelRequired && !modelReady) setIsModelModalOpen(true);
-  }, [modelReady, modelRequired, onModelStatusChange]);
+  }, [modelReady, modelRequired]);
 
   useEffect(() => {
     if (modelConfigRequest > 0) setIsModelModalOpen(true);
@@ -239,25 +223,6 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
   const [activeSuiteSlot, setActiveSuiteSlot] = useState<string>('slot_1_ctr');
   const [isGeneratingSuite, setIsGeneratingSuite] = useState<boolean>(false);
   const [generatingSlotIndex, setGeneratingSlotIndex] = useState<number>(1);
-
-  // Sync to localStorage
-  useEffect(() => {
-    localStorage.setItem('SELECTED_PROMPT_MODEL', selectedPromptModel);
-  }, [selectedPromptModel]);
-
-  useEffect(() => {
-    localStorage.setItem('SELECTED_IMAGE_MODEL', selectedImageModel);
-  }, [selectedImageModel]);
-
-  useEffect(() => {
-    const { apiKey: _apiKey, ...safeConfig } = customPromptConfig;
-    localStorage.setItem('CUSTOM_PROMPT_CONFIG', JSON.stringify(safeConfig));
-  }, [customPromptConfig]);
-
-  useEffect(() => {
-    const { apiKey: _apiKey, ...safeConfig } = customImageConfig;
-    localStorage.setItem('CUSTOM_IMAGE_CONFIG', JSON.stringify(safeConfig));
-  }, [customImageConfig]);
 
   // Analysis and Generation States
   const [isAnalyzingProduct, setIsAnalyzingProduct] = useState<boolean>(false);
@@ -1253,10 +1218,6 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
   const handleAiAnalyzeProduct = async () => {
     setIsAnalyzingProduct(true);
     try {
-      const effectiveModelName = selectedPromptModel === 'custom-prompt-model'
-        ? (customPromptConfig.useManual ? (customPromptConfig.manualModel || 'qwen-vl-max') : (customPromptConfig.selectedModel || customPromptConfig.manualModel || 'qwen-vl-max'))
-        : selectedPromptModel;
-
       const optimizedImage = await optimizeImageForUpload(activeProductImage, 960);
 
       const res = await safeFetchJson('/api/ai-analyze-product', {
@@ -1267,9 +1228,9 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
           category: currentProduct.category,
           targetPlatform: platformConfig.name,
           imageBase64: optimizedImage,
-          analysisModel: effectiveModelName,
-          customEndpointUrl: selectedPromptModel === 'custom-prompt-model' ? customPromptConfig.endpointUrl : undefined,
-          customApiKey: selectedPromptModel === 'custom-prompt-model' ? customPromptConfig.apiKey : undefined
+          analysisModel: promptModelRequest.modelName,
+          customEndpointUrl: promptModelRequest.customEndpointUrl,
+          customApiKey: promptModelRequest.customApiKey
         })
       }, 25000);
 
@@ -1280,7 +1241,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
           type: 'error'
         });
         setIsModelModalOpen(true);
-        onModelStatusChange?.(false);
+        markBindingRejected();
         return;
       }
       if (result && result.success && result.data) {
@@ -1322,7 +1283,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
           setNegativePrompt(result.data.negativePrompt);
         }
         setLastUsedModelTag({
-          promptModel: selectedPromptModel === 'custom-prompt-model' ? `[自定义] ${effectiveModelName}` : (result.modelUsed || activePromptModel.name),
+          promptModel: selectedPromptModel === 'custom-prompt-model' ? `[自定义] ${promptModelRequest.modelName}` : (result.modelUsed || activePromptModel.name),
           imageModel: selectedImageModel === 'custom-image-engine' ? `[自定义] ${customImageConfig.useManual ? customImageConfig.manualModel : customImageConfig.selectedModel}` : activeImageModel.name
         });
         setFeedbackBanner({
@@ -1367,10 +1328,6 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
     setFeedbackBanner(null);
 
     try {
-      const effectiveImageModelName = selectedImageModel === 'custom-image-engine'
-        ? (customImageConfig.useManual ? (customImageConfig.manualModel || 'flux.1-schnell') : (customImageConfig.selectedModel || customImageConfig.manualModel || 'flux.1-schnell'))
-        : selectedImageModel;
-
       const optimizedImage = await optimizeImageForUpload(activeProductImage, 960);
 
       const generationPayload = {
@@ -1379,9 +1336,9 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
           aspectRatio,
           imageBase64: optimizedImage, // Real photo base
           stylePreset: activeScene.name,
-          imageModel: effectiveImageModelName,
-          customEndpointUrl: selectedImageModel === 'custom-image-engine' ? customImageConfig.endpointUrl : undefined,
-          customApiKey: selectedImageModel === 'custom-image-engine' ? customImageConfig.apiKey : undefined,
+          imageModel: imageModelRequest.modelName,
+          customEndpointUrl: imageModelRequest.customEndpointUrl,
+          customApiKey: imageModelRequest.customApiKey,
           denoisingStrength
       };
       let generation = await requestProductImageWithRetry(generationPayload, 25000);
@@ -1392,7 +1349,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
           type: 'error'
         });
         setIsModelModalOpen(true);
-        onModelStatusChange?.(false);
+        markBindingRejected();
         return;
       }
 
@@ -1614,10 +1571,6 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
       let warningCount = 0;
     
     try {
-      const effectiveImageModelName = selectedImageModel === 'custom-image-engine'
-        ? (customImageConfig.useManual ? (customImageConfig.manualModel || 'flux.1-schnell') : (customImageConfig.selectedModel || customImageConfig.manualModel || 'flux.1-schnell'))
-        : selectedImageModel;
-
       for (let i = 0; i < updatedSuite.length; i++) {
         const slot = updatedSuite[i];
         setGeneratingSlotIndex(slot.slotIndex);
@@ -1632,9 +1585,9 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
               aspectRatio: selectedPlatform === 'douyin' ? '3:4' : (selectedPlatform === 'xiaohongshu' ? '3:4' : '1:1'),
               imageBase64: optimizedSlotBaseImage,
               stylePreset: slot.customStyleName,
-              imageModel: effectiveImageModelName,
-              customEndpointUrl: selectedImageModel === 'custom-image-engine' ? customImageConfig.endpointUrl : undefined,
-              customApiKey: selectedImageModel === 'custom-image-engine' ? customImageConfig.apiKey : undefined,
+              imageModel: imageModelRequest.modelName,
+              customEndpointUrl: imageModelRequest.customEndpointUrl,
+              customApiKey: imageModelRequest.customApiKey,
               denoisingStrength
           }, 18000);
 
@@ -1645,7 +1598,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
               type: 'error'
             });
             setIsModelModalOpen(true);
-            onModelStatusChange?.(false);
+            markBindingRejected();
             setGeneratingSlotIndex(0);
             setIsGeneratingSuite(false);
             return;

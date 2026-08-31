@@ -231,3 +231,64 @@ test('malformed persisted model config still renders the config modal', async ({
   await expect(page.getByRole('button', { name: /从拉取列表中选择/ }).first()).toBeVisible();
   expect(pageErrors).toEqual([]);
 });
+
+test('selling point extraction reuses the bound prompt model', async ({ page }) => {
+  await page.goto('/');
+  await page.evaluate(() => {
+    localStorage.setItem('SELECTED_PROMPT_MODEL', 'custom-prompt-model');
+    localStorage.setItem('CUSTOM_PROMPT_CONFIG', JSON.stringify({
+      endpointUrl: 'http://127.0.0.1:4599/v1',
+      selectedModel: 'bound-vision-model',
+      manualModel: 'bound-vision-model',
+      useManual: false,
+      fetchedModels: ['bound-vision-model']
+    }));
+  });
+  await page.reload();
+
+  const requests: any[] = [];
+  await page.route('**/api/ai-analyze-product', async (route) => {
+    requests.push(route.request().postDataJSON());
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        generationMode: 'ai',
+        modelUsed: 'bound-vision-model',
+        data: { productIdentified: '识别出的样例商品', coreSellingPoints: ['真实卖点一', '真实卖点二'] }
+      })
+    });
+  });
+
+  await page.locator('#active-product-btn').click();
+  await page.getByRole('button', { name: /上传自定义商品/ }).click();
+  await expect(page.getByTestId('selling-point-model')).toHaveText('bound-vision-model');
+
+  await page.getByTestId('custom-product-images').setInputFiles({ name: 'product.png', mimeType: 'image/png', buffer: PNG_FIXTURE });
+  await page.getByRole('button', { name: /AI 一键提炼卖点/ }).click();
+
+  await expect(page.getByText('真实卖点一')).toBeVisible();
+  expect(requests).toHaveLength(1);
+  expect(requests[0].analysisModel).toBe('bound-vision-model');
+  expect(requests[0].customEndpointUrl).toBe('http://127.0.0.1:4599/v1');
+});
+
+test('selling point extraction refuses to fake results when the model gate rejects', async ({ page }) => {
+  await page.goto('/');
+  await page.route('**/api/ai-analyze-product', async (route) => {
+    await route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: false, error: '未绑定可用模型，请先配置模型。', code: 'MODEL_REQUIRED' })
+    });
+  });
+
+  await page.locator('#active-product-btn').click();
+  await page.getByRole('button', { name: /上传自定义商品/ }).click();
+  await page.getByTestId('custom-product-images').setInputFiles({ name: 'product.png', mimeType: 'image/png', buffer: PNG_FIXTURE });
+  await page.getByRole('button', { name: /AI 一键提炼卖点/ }).click();
+
+  await expect(page.getByRole('alert')).toContainText('未绑定可用模型');
+  // The old behaviour silently填充 placeholder points; that must not happen now.
+  await expect(page.getByText('待商家核对')).toHaveCount(0);
+});
