@@ -33,6 +33,7 @@ export interface HeroSuiteItem {
   qualityIssues?: string[];
   sourceMode?: 'ai' | 'procedural';
   retryCount?: number;
+  failureMessage?: string;
 }
 
 export interface PlatformConfig {
@@ -118,6 +119,8 @@ export interface DetailPageModule {
 
 export interface BatchTask {
   id: string;
+  /** Whether the image came from a real model call or a local canvas composite. */
+  sourceMode?: 'ai' | 'procedural';
   productId: string;
   productName: string;
   productImage: string;

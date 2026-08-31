@@ -697,145 +697,90 @@ export const INITIAL_CHANNELS: ChannelStore[] = [
   }
 ];
 
+/**
+ * Only models this build can actually call are listed. The Google entries run
+ * through the server-side Gemini SDK and therefore need GEMINI_API_KEY; any other
+ * vendor is reached through the custom OpenAI-compatible endpoint, so listing it
+ * as a built-in preset would misrepresent which provider serves the request.
+ */
 export const PROMPT_MODELS_DATA = [
   {
     id: 'gemini-3.7-flash',
     name: 'Gemini 3.7 Flash',
     provider: 'Google',
-    tag: '推荐 · 极速多模态',
-    description: '最新旗舰多模态大模型，能精准识别实拍图材质、高光与结构并结合电商平台规则生成高质量商业提示词',
-    supportsVision: true
+    tag: '需服务端 GEMINI_API_KEY',
+    description: '多模态模型，识别实拍图材质与结构并结合平台规范生成商业提示词。走服务端 Gemini SDK，需先配置 GEMINI_API_KEY',
+    supportsVision: true,
+    requiresGeminiKey: true
   },
   {
     id: 'gemini-3.1-pro-preview',
     name: 'Gemini 3.1 Pro Preview',
     provider: 'Google',
-    tag: '深度推理 · 高精材质',
-    description: '深度推理大模型，擅长复杂工业级材质反光解析、高级光影场景拆解与爆款营销心理学文案',
-    supportsVision: true
+    tag: '需服务端 GEMINI_API_KEY',
+    description: '推理更强的多模态模型，适合复杂材质反光与光影场景拆解。走服务端 Gemini SDK，需先配置 GEMINI_API_KEY',
+    supportsVision: true,
+    requiresGeminiKey: true
   },
   {
     id: 'gemini-2.5-flash',
     name: 'Gemini 2.5 Flash',
     provider: 'Google',
-    tag: '超低延时 · 快速分析',
-    description: '轻量高效多模态视觉模型，适合快速批量处理商品实拍图解析',
-    supportsVision: true
-  },
-  {
-    id: 'gemini-2.5-pro',
-    name: 'Gemini 2.5 Pro',
-    provider: 'Google',
-    tag: '综合旗舰 · 细腻洞察',
-    description: '高精度多模态理解，提供细致入微的视觉建议与电商转化卖点挖掘',
-    supportsVision: true
-  },
-  {
-    id: 'deepseek-r1',
-    name: 'DeepSeek R1 / V3 (电商微调)',
-    provider: 'DeepSeek',
-    tag: '电商大促爆款思维',
-    description: '深度思维链推理，特别擅长提炼高转化率的主图文案与大促营销打标',
-    supportsVision: true
-  },
-  {
-    id: 'gpt-4o',
-    name: 'GPT-4o Vision',
-    provider: 'OpenAI',
-    tag: '经典多模态',
-    description: '广泛认可的跨模态视觉理解能力，支持全语种商业提示词转化',
-    supportsVision: true
+    tag: '需服务端 GEMINI_API_KEY',
+    description: '轻量多模态模型，适合快速批量解析商品实拍图。走服务端 Gemini SDK，需先配置 GEMINI_API_KEY',
+    supportsVision: true,
+    requiresGeminiKey: true
   },
   {
     id: 'custom-prompt-model',
-    name: '自定义分析模型 (Custom Endpoint)',
+    name: '自定义分析模型 (OpenAI 兼容端点)',
     provider: 'Custom',
-    tag: '企业自建 / 私有化',
-    description: '支持接入自建的大模型 API 端点 (如 Qwen-VL, Claude 3.5, 智谱 GLM-4V)',
+    tag: '通用 · 可接任意兼容端点',
+    description: '接入任意 OpenAI 兼容的 /chat/completions 端点，如 DashScope Qwen-VL、DeepSeek、OpenAI、Claude 中继、智谱 GLM-4V、Ollama',
     supportsVision: true,
     isCustom: true
   }
 ];
 
+/**
+ * Same rule as the prompt models: every entry maps to a provider this build
+ * actually calls. Flux, SDXL, DALL-E and similar engines are reachable through
+ * the custom endpoint, which is where their real model name belongs.
+ */
 export const IMAGE_MODELS_DATA = [
   {
-    id: 'nano-banana-pro',
-    name: 'Nano Banana Pro (商业高保真生图引擎)',
-    provider: 'Nano Banana AI',
-    tag: '首选自带 · 1秒极速出图',
-    description: '原生自带轻量级高性能生图引擎，专为电商主体融合、微距材质光泽与超高保真商业合成打造',
-    supportsImg2Img: true
-  },
-  {
-    id: 'nano-banana-turbo',
-    name: 'Nano Banana Turbo (5套连发极速引擎)',
-    provider: 'Nano Banana AI',
-    tag: '秒级出图 · 5张矩阵专享',
-    description: '毫秒级响应出图架构，专为一键并发快速生成电商标准5张主图套图设计，免等待',
-    supportsImg2Img: true
-  },
-  {
     id: 'gemini-3.1-flash-image',
-    name: 'Gemini 3.1 Flash Image (Nano Banana 2)',
+    name: 'Gemini 3.1 Flash Image',
     provider: 'Google GenAI',
-    tag: '官方推荐 · 图生图保真',
-    description: '高保真多模态图生图引擎，将实拍图主体与商业背景自然融合，支持 1K 分辨率',
-    supportsImg2Img: true
-  },
-  {
-    id: 'imagen-3.0-generate-002',
-    name: 'Google Imagen 3 (Studio 002)',
-    provider: 'Google DeepMind',
-    tag: '逼真质感 · 顶级影棚',
-    description: '顶尖真实感商业摄影生图大模型，色彩饱满、微距质感出众、光影立体感极强',
-    supportsImg2Img: true
+    tag: '需服务端 GEMINI_API_KEY',
+    description: '图生图引擎，将实拍图主体与生成背景融合。走服务端 Gemini SDK，需先配置 GEMINI_API_KEY',
+    supportsImg2Img: true,
+    requiresGeminiKey: true
   },
   {
     id: 'gemini-3.1-flash-lite-image',
     name: 'Gemini 3.1 Flash Lite Image',
     provider: 'Google GenAI',
-    tag: '轻量快速 · 敏捷预览',
-    description: '超高生成速度，适合在多方案快速探索或批量构图草稿阶段使用',
-    supportsImg2Img: true
+    tag: '需服务端 GEMINI_API_KEY',
+    description: '更快的轻量图生图引擎，适合草稿与多方案比对。走服务端 Gemini SDK，需先配置 GEMINI_API_KEY',
+    supportsImg2Img: true,
+    requiresGeminiKey: true
   },
   {
-    id: 'gemini-3-pro-image',
-    name: 'Gemini 3 Pro Image',
-    provider: 'Google GenAI',
-    tag: '超清大片 · 专业级',
-    description: '专为高定商业广告与印刷级画质打造的专业图像大模型',
-    supportsImg2Img: true
-  },
-  {
-    id: 'flux-1-pro',
-    name: 'Flux.1 Pro / Dev (电商商业版)',
-    provider: 'Black Forest Labs',
-    tag: '写实王者 · 结构精细',
-    description: '当今写实度极高的开源/商用模型之一，对复杂材质与多光源反射有超强还原力',
-    supportsImg2Img: true
-  },
-  {
-    id: 'midjourney-v6',
-    name: 'Midjourney v6.1 (Commercial Studio API)',
-    provider: 'Midjourney',
-    tag: '高奢美学 · 广告大片',
-    description: '极具艺术审美的商业摄影视觉流，擅长高奢大理石、水波倒影与质感光斑氛围',
-    supportsImg2Img: true
-  },
-  {
-    id: 'stable-diffusion-3.5',
-    name: 'Stable Diffusion 3.5 Large (电商工作流)',
-    provider: 'Stability AI',
-    tag: 'LoRA/ControlNet 精准控图',
-    description: '支持边缘线稿保持与深度图引导，精准锁定实拍产品外观结构不变',
-    supportsImg2Img: true
+    id: 'imagen-3.0-generate-002',
+    name: 'Google Imagen 3 (文生图)',
+    provider: 'Google DeepMind',
+    tag: '需服务端 GEMINI_API_KEY · 不吃参考图',
+    description: '纯文生图模型，不接收实拍参考图，主体一致性需靠提示词约束。走服务端 Gemini SDK，需先配置 GEMINI_API_KEY',
+    supportsImg2Img: false,
+    requiresGeminiKey: true
   },
   {
     id: 'custom-image-engine',
-    name: '自定义生图接口 (ComfyUI / SD API)',
+    name: '自定义生图接口 (OpenAI 兼容 / ComfyUI / SD API)',
     provider: 'Custom Engine',
-    tag: '自建算力 / 企业私有',
-    description: '支持配置私有部署的 ComfyUI / SD WebUI 实例或三方生图中继端点',
+    tag: '通用 · 可接任意兼容端点',
+    description: '接入任意 /images/generations 兼容端点或自建 ComfyUI / SD WebUI，如硅基流动 Flux、DALL-E 3、SDXL',
     supportsImg2Img: true,
     isCustom: true
   }

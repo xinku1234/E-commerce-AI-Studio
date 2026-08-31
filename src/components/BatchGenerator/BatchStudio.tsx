@@ -10,7 +10,8 @@ import {
   Trash2, 
   FolderDown,
   Sparkles,
-  ShieldCheck
+  ShieldCheck,
+  AlertTriangle
 } from 'lucide-react';
 import { BatchTask, ProductItem, PlatformId } from '../../types';
 import { PLATFORMS_DATA, SAMPLE_PRODUCTS, SCENE_STYLES } from '../../data/presets';
@@ -19,6 +20,8 @@ import { uniqueId } from '../../utils/uniqueId';
 import { safeFetchJson } from '../../utils/apiUtils';
 import { synthesizeCommercialStudioScene, renderCompleteHeroSlotImage } from '../../utils/sceneSynthesizer';
 import { validateEcommerceOutput } from '../../utils/imageQuality';
+import { ModelBinding } from '../../hooks/useModelBinding';
+import { describeModelFailure } from '../../utils/modelErrors';
 
 interface BatchStudioProps {
   batchTasks: BatchTask[];
@@ -26,6 +29,8 @@ interface BatchStudioProps {
   onClearTasks: () => void;
   currentProduct: ProductItem;
   onNavigateToPublish: () => void;
+  modelBinding: ModelBinding;
+  onRequireModel?: () => void;
 }
 
 export const BatchStudio: React.FC<BatchStudioProps> = ({
@@ -33,8 +38,14 @@ export const BatchStudio: React.FC<BatchStudioProps> = ({
   onUpdateTasks,
   onClearTasks,
   currentProduct,
-  onNavigateToPublish
+  onNavigateToPublish,
+  modelBinding,
+  onRequireModel
 }) => {
+  // Batch tasks call the same image engine as the hero studio, so they use the
+  // same binding instead of hardcoding a model id.
+  const { modelRequired, imageModelReady, imageModelRequest, markBindingRejected } = modelBinding;
+  const imageModelUsable = !modelRequired || imageModelReady;
   const [filterPlatform, setFilterPlatform] = useState<string>('all');
   const [isProcessingBatch, setIsProcessingBatch] = useState<boolean>(false);
   const availableProducts = [currentProduct, ...SAMPLE_PRODUCTS.filter(product => product.id !== currentProduct.id)];
@@ -71,6 +82,11 @@ export const BatchStudio: React.FC<BatchStudioProps> = ({
   };
 
   const handleStartBatchRun = async (tasksToRun: BatchTask[]) => {
+    if (!imageModelUsable) {
+      setBatchError('未绑定可用的生图模型，请先在主图工作台的「模型与接口配置」中完成生图端点绑定与连接测试。');
+      onRequireModel?.();
+      return;
+    }
     setIsProcessingBatch(true);
     setBatchError(null);
     let updated = [...tasksToRun];
@@ -92,16 +108,25 @@ export const BatchStudio: React.FC<BatchStudioProps> = ({
               aspectRatio: task.aspectRatio,
               imageBase64: product.imageUrl,
               stylePreset: task.styleId,
-              imageModel: 'gemini-3.1-flash-image'
+              imageModel: imageModelRequest.modelName,
+              customEndpointUrl: imageModelRequest.customEndpointUrl,
+              customApiKey: imageModelRequest.customApiKey
             })
-          }, 25000);
+          }, 45000);
           const data = response.data || {};
           if (data.code === 'MODEL_REQUIRED') {
+            markBindingRejected();
+            onRequireModel?.();
             throw new Error(data.error || '未绑定可用模型，请先在主图工作台完成模型绑定与连接测试。');
+          }
+          if (data.code) {
+            throw new Error(describeModelFailure({ ok: false, status: 502, data }, '生图模型调用失败。').message);
           }
           updated[i] = { ...updated[i], progress: 65 };
           onUpdateTasks([...updated]);
 
+          // Only reachable in explicit demo mode; the server rejects the request
+          // when a model is required, so this canvas never poses as AI output.
           const aiBackground = data.imageUrl || synthesizeCommercialStudioScene({
             sceneStyleId: task.styleId,
             platformId: task.platform,
@@ -135,7 +160,8 @@ export const BatchStudio: React.FC<BatchStudioProps> = ({
             status: 'completed',
             progress: 100,
             resultImageUrl,
-            complianceScore: quality.score
+            complianceScore: quality.score,
+            sourceMode: data.imageUrl ? 'ai' : 'procedural'
           };
         } catch (error: any) {
           updated[i] = { ...updated[i], status: 'failed', progress: 0 };
@@ -146,7 +172,10 @@ export const BatchStudio: React.FC<BatchStudioProps> = ({
     }
 
     setIsProcessingBatch(false);
-    if (updated.some(task => task.status === 'completed')) fireSuccessConfetti();
+    // Celebrate only real model output; local composition is not a finished asset.
+    if (updated.some(task => task.status === 'completed' && task.sourceMode === 'ai')) {
+      fireSuccessConfetti();
+    }
   };
 
   const handleDownloadAllZip = async () => {
@@ -157,7 +186,7 @@ export const BatchStudio: React.FC<BatchStudioProps> = ({
       files.push({
         name: `${task.productName}_${platName}_${task.aspectRatio}_主图.txt`,
         folder: `${platName}物料包`,
-        textContent: `商品: ${task.productName}\n平台: ${platName}\n比例: ${task.aspectRatio}\n合规分: ${task.complianceScore}%\n生成状态: ${task.status}`
+        textContent: `商品: ${task.productName}\n平台: ${platName}\n比例: ${task.aspectRatio}\n合规分: ${task.complianceScore}%\n生成状态: ${task.status}\n图片来源: ${task.sourceMode === 'ai' ? '生图模型输出' : task.sourceMode === 'procedural' ? '本地画布合成（未调用生图模型，不可作为成品）' : '未知'}`
       });
       if (task.resultImageUrl) {
         files.push({
@@ -401,9 +430,18 @@ export const BatchStudio: React.FC<BatchStudioProps> = ({
                   <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between">
                     <div className="flex items-center gap-1.5 text-xs">
                       {task.status === 'completed' ? (
-                        <span className="text-emerald-400 font-medium flex items-center gap-1">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> 已完成
-                        </span>
+                        task.sourceMode === 'procedural' ? (
+                          <span
+                            className="text-amber-400 font-medium flex items-center gap-1"
+                            title="本地画布合成，未调用生图模型，不可作为成品"
+                          >
+                            <AlertTriangle className="w-3.5 h-3.5" /> 本地合成
+                          </span>
+                        ) : (
+                          <span className="text-emerald-400 font-medium flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> 模型已生成
+                          </span>
+                        )
                       ) : task.status === 'processing' ? (
                         <span className="text-amber-400 font-medium flex items-center gap-1">
                           <Clock className="w-3.5 h-3.5 animate-spin" /> 生成中 ({task.progress}%)

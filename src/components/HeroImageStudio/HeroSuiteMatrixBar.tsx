@@ -11,7 +11,9 @@ import {
   ArrowRight,
   Eye,
   Sliders,
-  Check
+  Check,
+  AlertTriangle,
+  XCircle
 } from 'lucide-react';
 import { HeroSuiteItem, PlatformId } from '../../types';
 
@@ -41,7 +43,13 @@ export const HeroSuiteMatrixBar: React.FC<HeroSuiteMatrixBarProps> = ({
   generatingSlotIndex
 }) => {
   const is1688 = selectedPlatform === '1688';
-  const completedCount = suiteItems.filter(s => s.isGenerated || s.imageUrl).length;
+  // Only images that actually came back from the bound image model count as
+  // finished. Locally composited or failed slots are reported separately so the
+  // matrix never implies a model produced something it did not.
+  const aiCount = suiteItems.filter(s => s.sourceMode === 'ai' && s.imageUrl).length;
+  const localCount = suiteItems.filter(s => s.sourceMode === 'procedural' && s.imageUrl).length;
+  const failedCount = suiteItems.filter(s => s.status === 'failed' && !s.imageUrl).length;
+  const exportableCount = aiCount + localCount;
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-2xl space-y-4">
@@ -63,8 +71,10 @@ export const HeroSuiteMatrixBar: React.FC<HeroSuiteMatrixBarProps> = ({
               }`}>
                 {is1688 ? '🏭 1688 工厂批发专享' : '⚡ 行业爆款标准'}
               </span>
-              <span className="text-[11px] text-slate-400 font-mono hidden sm:inline">
-                ({completedCount}/5 张已就绪)
+              <span className="text-[11px] font-mono hidden sm:inline text-slate-400">
+                ({aiCount}/5 张模型已生成
+                {localCount > 0 ? ` · ${localCount} 张本地合成` : ''}
+                {failedCount > 0 ? ` · ${failedCount} 张失败` : ''})
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
@@ -99,7 +109,7 @@ export const HeroSuiteMatrixBar: React.FC<HeroSuiteMatrixBarProps> = ({
 
           <button
             onClick={onExportZip}
-            disabled={completedCount === 0 || isGenerating}
+            disabled={exportableCount === 0 || isGenerating}
             className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 border border-slate-700 text-slate-200 hover:text-white font-semibold text-xs flex items-center gap-1.5 transition-colors shadow"
             title="将当前5张主图打包导出为ZIP"
           >
@@ -109,7 +119,7 @@ export const HeroSuiteMatrixBar: React.FC<HeroSuiteMatrixBarProps> = ({
 
           <button
             onClick={onAddAllToBatch}
-            disabled={completedCount === 0 || isGenerating}
+            disabled={exportableCount === 0 || isGenerating}
             className="px-3.5 py-2 rounded-xl bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/60 disabled:opacity-40 text-indigo-200 font-semibold text-xs flex items-center gap-1.5 transition-colors"
             title="将这5张图片推送到批量发布矩阵"
           >
@@ -120,7 +130,7 @@ export const HeroSuiteMatrixBar: React.FC<HeroSuiteMatrixBarProps> = ({
       </div>
 
       {/* 5-Card Deck Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+      <div data-testid="hero-suite-matrix" className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
         {suiteItems.map((item, index) => {
           const isActive = item.slot === activeSlotId;
           const isSlotGenerating = isGenerating && generatingSlotIndex === item.slotIndex;
@@ -134,7 +144,11 @@ export const HeroSuiteMatrixBar: React.FC<HeroSuiteMatrixBarProps> = ({
                   ? is1688
                     ? 'bg-orange-950/40 border-orange-500 shadow-lg shadow-orange-950/50 ring-2 ring-orange-500/50'
                     : 'bg-slate-800/90 border-rose-500 shadow-lg shadow-rose-950/50 ring-2 ring-rose-500/50'
-                  : 'bg-slate-950/60 border-slate-800 hover:border-slate-700 hover:bg-slate-800/40'
+                  : item.status === 'failed' && !item.imageUrl
+                    ? 'bg-rose-950/30 border-rose-500/50 hover:border-rose-400'
+                    : item.sourceMode === 'procedural' && item.imageUrl
+                      ? 'bg-amber-950/20 border-amber-500/40 hover:border-amber-400'
+                      : 'bg-slate-950/60 border-slate-800 hover:border-slate-700 hover:bg-slate-800/40'
               }`}
             >
               {/* Card Header */}
@@ -147,13 +161,31 @@ export const HeroSuiteMatrixBar: React.FC<HeroSuiteMatrixBarProps> = ({
                   #{item.slotIndex} {item.slotShortName}
                 </span>
 
-                {item.isGenerated || item.imageUrl ? (
-                  <span className={`flex items-center gap-1 text-[10px] font-medium ${
-                    item.qualityStatus === 'warning' ? 'text-amber-400' :
-                    item.qualityStatus === 'fallback' ? 'text-sky-400' : 'text-emerald-400'
-                  }`} title={item.qualityIssues?.join('；')}>
+                {item.status === 'failed' && !item.imageUrl ? (
+                  <span
+                    className="flex items-center gap-1 text-[10px] font-bold text-rose-400"
+                    title={item.failureMessage}
+                  >
+                    <XCircle className="w-3 h-3" />
+                    生成失败
+                  </span>
+                ) : item.sourceMode === 'procedural' && item.imageUrl ? (
+                  <span
+                    className="flex items-center gap-1 text-[10px] font-bold text-amber-400"
+                    title="本地画布合成，未调用生图模型"
+                  >
+                    <AlertTriangle className="w-3 h-3" />
+                    本地合成
+                  </span>
+                ) : item.sourceMode === 'ai' && item.imageUrl ? (
+                  <span
+                    className={`flex items-center gap-1 text-[10px] font-medium ${
+                      item.qualityStatus === 'warning' ? 'text-amber-400' : 'text-emerald-400'
+                    }`}
+                    title={item.qualityIssues?.join('；')}
+                  >
                     <CheckCircle2 className="w-3 h-3" />
-                    {item.qualityScore != null ? `${item.qualityScore}分` : '已就绪'}
+                    {item.qualityScore != null ? `${item.qualityScore}分` : '已生成'}
                   </span>
                 ) : (
                   <span className="text-[10px] text-slate-500 font-mono">
@@ -190,7 +222,7 @@ export const HeroSuiteMatrixBar: React.FC<HeroSuiteMatrixBarProps> = ({
                 {isSlotGenerating && (
                   <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center p-2 text-center">
                     <div className="w-6 h-6 border-2 border-rose-500 border-t-transparent rounded-full animate-spin mb-1" />
-                    <span className="text-[10px] text-rose-400 font-bold">Nano生图中...</span>
+                    <span className="text-[10px] text-rose-400 font-bold">生图中...</span>
                   </div>
                 )}
               </div>
@@ -201,9 +233,17 @@ export const HeroSuiteMatrixBar: React.FC<HeroSuiteMatrixBarProps> = ({
                   {item.slotPurpose}
                 </p>
 
-                {item.sourceMode && (
-                  <div className={`mt-1 text-[9px] font-medium ${item.sourceMode === 'ai' ? 'text-emerald-400' : 'text-sky-400'}`}>
-                    {item.sourceMode === 'ai' ? 'AI 生成' : '本地合成回退'}
+                {item.status === 'failed' && !item.imageUrl && (
+                  <div className="mt-1 text-[9px] font-medium text-rose-400 line-clamp-2 leading-relaxed" title={item.failureMessage}>
+                    {item.failureMessage || '生图模型调用失败，请检查生图端点配置。'}
+                  </div>
+                )}
+
+                {item.imageUrl && item.sourceMode && (
+                  <div className={`mt-1 text-[9px] font-medium ${item.sourceMode === 'ai' ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {item.sourceMode === 'ai'
+                      ? `模型生成 (${activeImageModelName})`
+                      : '本地画布合成 · 未调用生图模型 · 不可作为成品'}
                     {item.qualityStatus === 'warning' ? ' · 建议复核' : ''}
                     {item.retryCount ? ` · 重试 ${item.retryCount} 次` : ''}
                   </div>

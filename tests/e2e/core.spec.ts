@@ -126,6 +126,45 @@ test('a failing bound endpoint is reported as an endpoint failure, not as a miss
   await expect(page.getByText('待商家核对')).toHaveCount(0);
 });
 
+test('a failing image endpoint leaves the hero suite empty instead of scoring a local canvas', async ({ page }) => {
+  await page.goto('/');
+  await page.route('**/api/generate-product-image', async (route) => {
+    await route.fulfill({
+      status: 502,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: false,
+        code: 'IMAGE_GENERATION_FAILED',
+        provider: 'custom-openai-compatible',
+        error: '自定义生图端点调用失败（HTTP 401）：invalid api key',
+        hint: '请在「模型与接口配置」的生图端点中核对接口地址、模型名称与 API Key。'
+      })
+    });
+  });
+
+  await page.getByRole('button', { name: /一键生成全套/ }).click();
+  await expect(page.getByRole('alert')).toContainText('生图失败', { timeout: 60_000 });
+  // A rejected call must never be presented as a ready, scored master image.
+  const matrix = page.getByTestId('hero-suite-matrix');
+  await expect(matrix.getByText('生成失败')).toHaveCount(5);
+  await expect(matrix.getByText(/^\d+分$/)).toHaveCount(0);
+  await expect(matrix.getByText('已生成')).toHaveCount(0);
+  await expect(matrix.getByText('本地合成')).toHaveCount(0);
+});
+
+test('hero suite marks demo-mode canvases as local composition, not model output', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /一键生成全套/ }).click();
+
+  // Wait for the run to finish before counting, otherwise the assertion races
+  // the slot-by-slot updates.
+  await expect(page.getByRole('status')).toContainText('未调用生图模型', { timeout: 120_000 });
+  const matrix = page.getByTestId('hero-suite-matrix');
+  await expect(matrix.getByText('本地合成')).toHaveCount(5);
+  // The old matrix showed a green check plus a score for these canvases.
+  await expect(matrix.getByText(/^\d+分$/)).toHaveCount(0);
+});
+
 test('mobile users can navigate all workspaces without horizontal overflow', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
@@ -141,7 +180,7 @@ test('mobile users can navigate all workspaces without horizontal overflow', asy
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.width + 1);
 });
 
-test('batch matrix executes a real provider or local composition task', async ({ page }) => {
+test('batch matrix labels a local composition task instead of claiming model output', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /批量矩阵生成/ }).click();
   await expect(page.getByText('暂无任务，请点击上方构建新矩阵添加任务。')).toBeVisible();
@@ -154,15 +193,17 @@ test('batch matrix executes a real provider or local composition task', async ({
   }
 
   await page.locator('#btn-create-batch-matrix').click();
-  await expect(page.getByText('已完成').first()).toBeVisible({ timeout: 30_000 });
+  // Demo mode returns no model image, so every card must read as local composition.
+  await expect(page.getByText('本地合成').first()).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText('生成失败')).toHaveCount(0);
+  await expect(page.getByText('模型已生成')).toHaveCount(0);
 });
 
 test('batch export ZIP contains generated PNG and metadata', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /批量矩阵生成/ }).click();
   await page.locator('#btn-create-batch-matrix').click();
-  await expect(page.getByText('已完成').first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText('本地合成').first()).toBeVisible({ timeout: 30_000 });
 
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: /打包下载全部物料/ }).click();
@@ -170,7 +211,10 @@ test('batch export ZIP contains generated PNG and metadata', async ({ page }) =>
   const zip = await JSZip.loadAsync(await readFile(zipPath));
   const entries = Object.values(zip.files).filter(entry => !entry.dir);
   expect(entries.some(entry => entry.name.endsWith('.png'))).toBeTruthy();
-  expect(entries.some(entry => entry.name.endsWith('.txt'))).toBeTruthy();
+  const metadata = entries.find(entry => entry.name.endsWith('.txt'));
+  expect(metadata).toBeTruthy();
+  const metadataText = await zip.files[metadata!.name].async('string');
+  expect(metadataText).toContain('本地画布合成');
 });
 
 test('custom product upload validates, saves, and survives reload', async ({ page }) => {

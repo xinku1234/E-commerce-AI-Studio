@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CustomEndpointConfig } from '../types';
+import { IMAGE_MODELS_DATA, PROMPT_MODELS_DATA } from '../data/presets';
 import {
   DEFAULT_IMAGE_ENDPOINT_CONFIG,
   DEFAULT_PROMPT_ENDPOINT_CONFIG,
@@ -8,6 +9,20 @@ import {
 
 export const CUSTOM_PROMPT_MODEL_ID = 'custom-prompt-model';
 export const CUSTOM_IMAGE_ENGINE_ID = 'custom-image-engine';
+
+const DEFAULT_PROMPT_MODEL_ID = 'gemini-3.7-flash';
+const DEFAULT_IMAGE_MODEL_ID = 'gemini-3.1-flash-image';
+
+/**
+ * A model id persisted by an older build may no longer exist, and silently
+ * keeping it would leave the UI pointing at a provider nothing can call.
+ */
+function readStoredModelId(key: string, available: string[], fallback: string): string {
+  const stored = localStorage.getItem(key);
+  if (stored && available.includes(stored)) return stored;
+  if (stored) localStorage.removeItem(key);
+  return available.includes(fallback) ? fallback : available[0];
+}
 
 export interface ModelRequestFields {
   customEndpointUrl?: string;
@@ -55,10 +70,18 @@ export function useModelBinding(): ModelBinding {
   const [serverModelReady, setServerModelReady] = useState(false);
 
   const [selectedPromptModel, setSelectedPromptModel] = useState<string>(
-    () => localStorage.getItem('SELECTED_PROMPT_MODEL') || 'gemini-3.7-flash'
+    () => readStoredModelId(
+      'SELECTED_PROMPT_MODEL',
+      PROMPT_MODELS_DATA.map(model => model.id),
+      DEFAULT_PROMPT_MODEL_ID
+    )
   );
   const [selectedImageModel, setSelectedImageModel] = useState<string>(
-    () => localStorage.getItem('SELECTED_IMAGE_MODEL') || 'gemini-3.1-flash-image'
+    () => readStoredModelId(
+      'SELECTED_IMAGE_MODEL',
+      IMAGE_MODELS_DATA.map(model => model.id),
+      DEFAULT_IMAGE_MODEL_ID
+    )
   );
   const [customPromptConfig, setCustomPromptConfig] = useState<CustomEndpointConfig>(
     () => readStoredEndpointConfig('CUSTOM_PROMPT_CONFIG', DEFAULT_PROMPT_ENDPOINT_CONFIG)

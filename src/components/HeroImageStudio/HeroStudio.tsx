@@ -1394,6 +1394,14 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
   };
 
   const doGenerateAiBg = async () => {
+    if (modelRequired && !imageModelReady) {
+      setFeedbackBanner({
+        text: '未绑定可用的生图模型，请先在「模型与接口配置」中完成生图端点绑定与连接测试。',
+        type: 'error'
+      });
+      setIsModelModalOpen(true);
+      return;
+    }
     setIsGeneratingAiImage(true);
     setFeedbackBanner(null);
 
@@ -1422,7 +1430,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
         markBindingRejected();
         return;
       }
-      if (generation.data?.code === 'CUSTOM_ENDPOINT_FAILED' || generation.data?.code === 'MODEL_GENERATION_FAILED') {
+      if (generation.data?.code) {
         setFeedbackBanner({
           text: describeModelFailure({ ok: false, status: 502, data: generation.data }, '生图模型调用失败。').message,
           type: 'error'
@@ -1436,7 +1444,8 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
       setIsRealAiGenerated(isReal);
 
       if (!finalImageUrl) {
-        // High-definition procedural studio scene synthesis
+        // Reached only in explicit demo mode: the server refuses the request when
+        // a model is required, so this canvas is never presented as AI output.
         finalImageUrl = synthesizeCommercialStudioScene({
           sceneStyleId: selectedScene,
           platformId: selectedPlatform,
@@ -1531,48 +1540,28 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
           setHeroSuite(updatedSuite);
         }
 
-        setFeedbackBanner({
-          text: isReal
-            ? outputValidation.status === 'passed'
-              ? `大模型图片已生成并通过成品检查，质量评分 ${outputValidation.score} 分${generation.attempts > 1 ? '，已自动重试 1 次' : ''}。`
-              : `大模型图片已生成，成品评分 ${outputValidation.score} 分；${outputValidation.issues[0] || '建议人工检查后再发布'}。`
-            : `模型未返回有效图片，已使用本地合成模式完成成品，质量评分 ${outputValidation.score} 分。`,
-          type: outputValidation.status === 'passed' ? 'success' : 'info'
-        });
-        fireSuccessConfetti();
+        if (isReal) {
+          setFeedbackBanner({
+            text: outputValidation.status === 'passed'
+              ? `${data.modelUsed || imageModelRequest.modelName} 已生成图片并通过成品检查，质量评分 ${outputValidation.score} 分${generation.attempts > 1 ? '，已自动重试 1 次' : ''}。`
+              : `${data.modelUsed || imageModelRequest.modelName} 已生成图片，成品评分 ${outputValidation.score} 分；${outputValidation.issues[0] || '建议人工检查后再发布'}。`,
+            type: outputValidation.status === 'passed' ? 'success' : 'info'
+          });
+          fireSuccessConfetti();
+        } else {
+          // Explicit demo mode only. Never dressed up as a model result.
+          setFeedbackBanner({
+            text: `本地画布合成结果（未调用生图模型），质量评分 ${outputValidation.score} 分，不可作为真实生图结果使用。`,
+            type: 'info'
+          });
+        }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Generation error:', err);
-      const prodImageToUse = (isAutoMattingEnabled && mattedProductImage) ? mattedProductImage : activeProductImage;
-      const fallbackUrl = await renderCompleteHeroSlotImage({
-        slot: activeSuiteSlot,
-        productImage: prodImageToUse,
-        productName: currentProduct.name,
-        category: currentProduct.category,
-        sellingPoints: currentProduct.sellingPoints,
-        specs: currentProduct.specs,
-        platformId: selectedPlatform,
-        bgImageUrl: null,
-        headline: mainTitle,
-        subheadline: subTitle,
-        priceTag: priceTag || currentProduct.price?.toString() || '',
-        originalPriceTag: originalPriceTag || currentProduct.originalPrice?.toString() || '',
-        badgeText: customBadgeText || '',
-        themeAccent: themeAccent || '#ef4444',
-        width: 1024,
-        height: (selectedPlatform === 'douyin' || selectedPlatform === 'xiaohongshu') ? 1365 : 1024
+      setFeedbackBanner({
+        text: `生图请求失败：${err?.message || '未知错误'}。请检查生图端点与网络后重试。`,
+        type: 'error'
       });
-
-      if (fallbackUrl) {
-        setAiGeneratedBgUrl(fallbackUrl);
-        setRenderMode('composite');
-        setAiCompositeMode('ai_full_render');
-        setFeedbackBanner({
-          text: `商业大片已生成！已完成【${platformConfig.name}】影棚光影置换与商品置入`,
-          type: 'success'
-        });
-        fireSuccessConfetti();
-      }
     } finally {
       setIsGeneratingAiImage(false);
     }
@@ -1642,11 +1631,22 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
   };
 
   const doGenerateEntireSuite = async () => {
+    if (modelRequired && !imageModelReady) {
+      setFeedbackBanner({
+        text: '未绑定可用的生图模型，请先在「模型与接口配置」中完成生图端点绑定与连接测试。',
+        type: 'error'
+      });
+      setIsModelModalOpen(true);
+      return;
+    }
     setIsGeneratingSuite(true);
-      const updatedSuite = [...heroSuite];
-      let fallbackCount = 0;
-      let warningCount = 0;
-    
+    setFeedbackBanner(null);
+    const updatedSuite = [...heroSuite];
+    let localCompositeCount = 0;
+    let warningCount = 0;
+    let failedCount = 0;
+    let firstFailureMessage = '';
+
     try {
       for (let i = 0; i < updatedSuite.length; i++) {
         const slot = updatedSuite[i];
@@ -1655,6 +1655,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
         const optimizedSlotBaseImage = await optimizeImageForUpload(rawSlotBaseImage, 800);
         
         let slotBgImg: string | null = null;
+        let slotFailure = "";
         try {
           const generation = await requestProductImageWithRetry({
               prompt: slot.prompt,
@@ -1680,12 +1681,41 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
             setIsGeneratingSuite(false);
             return;
           }
-          slotBgImg = data.imageUrl;
+          if (data?.code) {
+            // The bound engine rejected this slot. Record the real reason instead
+            // of quietly substituting a locally drawn background.
+            failedCount++;
+            slotFailure = describeModelFailure({ ok: false, status: 502, data }, '生图模型调用失败。').message;
+            if (!firstFailureMessage) firstFailureMessage = slotFailure;
+          } else {
+            slotBgImg = data.imageUrl;
+            if (!slotBgImg) localCompositeCount++;
+          }
           updatedSuite[i] = { ...updatedSuite[i], retryCount: Math.max(0, generation.attempts - 1) };
-          if (!slotBgImg) fallbackCount++;
-        } catch (fetchErr) {
-          console.warn(`AI model request fallback for slot ${slot.slot}:`, fetchErr);
-          fallbackCount++;
+        } catch (fetchErr: any) {
+          console.warn(`Image request failed for slot ${slot.slot}:`, fetchErr);
+          failedCount++;
+          slotFailure = `生图请求失败：${fetchErr?.message || '未知错误'}`;
+          if (!firstFailureMessage) firstFailureMessage = slotFailure;
+        }
+
+        // A failed model call must stay empty. Compositing a canvas here and
+        // scoring it is exactly what made a failure look like a finished image.
+        if (slotFailure) {
+          updatedSuite[i] = {
+            ...slot,
+            imageUrl: undefined,
+            isGenerated: false,
+            status: 'failed',
+            qualityScore: undefined,
+            qualityStatus: undefined,
+            qualityIssues: undefined,
+            sourceMode: undefined,
+            failureMessage: slotFailure,
+            retryCount: updatedSuite[i].retryCount || 0
+          };
+          setHeroSuite([...updatedSuite]);
+          continue;
         }
 
         const prodImageToUse = (isAutoMattingEnabled && mattedProductImage) ? mattedProductImage : rawSlotBaseImage;
@@ -1720,11 +1750,12 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
             ...slot,
             imageUrl: completeMasterImage,
             isGenerated: true,
-            status: 'completed',
+            status: slotBgImg ? 'completed' : 'failed',
             qualityScore: outputValidation.score,
             qualityStatus: slotBgImg ? outputValidation.status : 'fallback',
             qualityIssues: outputValidation.issues,
             sourceMode: slotBgImg ? 'ai' : 'procedural',
+            failureMessage: undefined,
             retryCount: updatedSuite[i].retryCount || 0
           };
           setHeroSuite([...updatedSuite]);
@@ -1745,15 +1776,32 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
         setRenderMode('composite');
         setAiCompositeMode('ai_full_render');
       }
-      setFeedbackBanner({
-        text: fallbackCount > 0 || warningCount > 0
-          ? `5张套图已完成质量检查：${fallbackCount} 张使用本地合成，${warningCount} 张建议人工复核。`
-          : '5张套图已全部生成并通过基础质量检查。',
-        type: fallbackCount > 0 || warningCount > 0 ? 'info' : 'success'
-      });
-      fireSuccessConfetti();
-    } catch (err) {
+      const aiCount = updatedSuite.filter(item => item.sourceMode === 'ai').length;
+      if (failedCount > 0) {
+        setFeedbackBanner({
+          text: `${failedCount} / ${updatedSuite.length} 张生图失败，仅 ${aiCount} 张由模型生成。首个失败原因：${firstFailureMessage}`,
+          type: 'error'
+        });
+      } else if (localCompositeCount > 0) {
+        setFeedbackBanner({
+          text: `${localCompositeCount} 张为本地画布合成（未调用生图模型），${warningCount} 张建议人工复核，不可作为真实生图结果使用。`,
+          type: 'info'
+        });
+      } else {
+        setFeedbackBanner({
+          text: warningCount > 0
+            ? `5 张套图已由 ${imageModelRequest.modelName} 生成，其中 ${warningCount} 张建议人工复核。`
+            : `5 张套图已由 ${imageModelRequest.modelName} 生成并通过基础质量检查。`,
+          type: warningCount > 0 ? 'info' : 'success'
+        });
+        fireSuccessConfetti();
+      }
+    } catch (err: any) {
       console.error('Failed to generate full hero suite:', err);
+      setFeedbackBanner({
+        text: `套图生成中断：${err?.message || '未知错误'}`,
+        type: 'error'
+      });
     } finally {
       setIsGeneratingSuite(false);
       setGeneratingSlotIndex(1);
@@ -1783,14 +1831,18 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
         slot_5_whitebg: `05_白底图_100%合规主搜_${currentProduct.name}.png`
       };
 
+      const baseName = slotFileNames[slot.slot] || `0${slot.slotIndex}_主图_${slot.slot}.png`;
+      // Locally composited slots keep a marker in the filename so a reviewer can
+      // never mistake them for model output after the ZIP leaves the app.
+      const nameFor = (mode?: 'ai' | 'procedural') => (
+        mode === 'procedural' ? baseName.replace(/.png$/, '_本地合成未调用模型.png') : baseName
+      );
+
       if (slot.imageUrl) {
+        files.push({ name: nameFor(slot.sourceMode), dataUrl: slot.imageUrl });
+      } else if (slot.status !== 'failed' && canvasRef.current && activeSuiteSlot === slot.slot) {
         files.push({
-          name: slotFileNames[slot.slot] || `0${slot.slotIndex}_主图_${slot.slot}.png`,
-          dataUrl: slot.imageUrl
-        });
-      } else if (canvasRef.current && activeSuiteSlot === slot.slot) {
-        files.push({
-          name: slotFileNames[slot.slot] || `0${slot.slotIndex}_主图_${slot.slot}.png`,
+          name: nameFor('procedural'),
           dataUrl: canvasRef.current.toDataURL('image/png', 0.95)
         });
       }
@@ -1807,6 +1859,7 @@ export const HeroStudio: React.FC<HeroStudioProps> = ({
   const handleAddAllSuiteToBatch = () => {
     let count = 0;
     heroSuite.forEach(slot => {
+      if (slot.status === 'failed' && !slot.imageUrl) return;
       if (slot.imageUrl || (canvasRef.current && activeSuiteSlot === slot.slot)) {
         onAddToBatch({
           id: uniqueId(`task_suite_${slot.slot}`),

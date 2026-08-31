@@ -854,6 +854,23 @@ app.post("/api/generate-product-image", async (req, res) => {
       customApiKey,
       referenceImages: resolvedImageParts
     });
+
+    // No image means the bound engine failed. Returning success here is what let
+    // the client pass off a locally drawn canvas as a model result.
+    if (!result.imageUrl && getAiCapabilities().modelRequired) {
+      const bound = result.providerErrors?.find((entry) => entry.provider === "custom-openai-compatible")
+        || result.providerErrors?.at(-1);
+      return res.status(502).json({
+        success: false,
+        error: bound?.message || result.fallbackReason || "生图引擎没有返回图片。",
+        hint: "请在「模型与接口配置」的生图端点中核对接口地址、模型名称与 API Key，然后重新执行测试。",
+        code: "IMAGE_GENERATION_FAILED",
+        provider: bound?.provider,
+        providerErrors: result.providerErrors,
+        requestId: res.locals.requestId
+      });
+    }
+
     return res.json({ success: true, ...result });
   } catch (error: any) {
     if (getAiCapabilities().modelRequired) {

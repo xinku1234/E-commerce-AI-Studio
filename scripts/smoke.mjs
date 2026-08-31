@@ -150,6 +150,24 @@ try {
       if (/Gemini/i.test(analyzeJson.error)) throw new Error('custom endpoint failure misattributed to Gemini');
       if (analyzeJson.generationMode === 'ai') throw new Error('failed call reported as AI output');
 
+      // A bound image endpoint that returns no image must fail loudly instead of
+      // letting the client dress up a locally drawn canvas as model output.
+      const imageFail = await fetch(`http://127.0.0.1:${strictPort}/api/generate-product-image`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: 'test', imageModel: 'flux-fake', customEndpointUrl: endpointUrl })
+      });
+      const imageFailJson = await imageFail.json();
+      if (imageFail.status !== 502 || imageFailJson.code !== 'IMAGE_GENERATION_FAILED') {
+        throw new Error(`image failure not surfaced: ${imageFail.status} ${JSON.stringify(imageFailJson).slice(0, 200)}`);
+      }
+      if (imageFailJson.success !== false || imageFailJson.imageUrl) {
+        throw new Error('failed image generation still reported success');
+      }
+      if (imageFailJson.provider !== 'custom-openai-compatible') {
+        throw new Error(`image failure misattributed to ${imageFailJson.provider}`);
+      }
+
       for (const route of ['/api/generate-multimodal-platform-prompt', '/api/generate-detail-page-modules']) {
         const failed = await fetch(`http://127.0.0.1:${strictPort}${route}`, {
           method: 'POST',

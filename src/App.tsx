@@ -154,6 +154,8 @@ export default function App() {
                 onClearTasks={handleClearTasks}
                 currentProduct={currentProduct}
                 onNavigateToPublish={() => setActiveTab('publish')}
+                modelBinding={modelBinding}
+                onRequireModel={requestModelConfig}
               />
             </Suspense>
           </ErrorBoundary>

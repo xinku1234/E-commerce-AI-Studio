@@ -25,7 +25,12 @@ export function describeModelFailure(res: ModelFailureLike, fallbackMessage: str
     };
   }
 
-  if (data.code === 'CUSTOM_ENDPOINT_FAILED' || data.code === 'MODEL_CALL_FAILED') {
+  if (
+    data.code === 'CUSTOM_ENDPOINT_FAILED'
+    || data.code === 'MODEL_CALL_FAILED'
+    || data.code === 'IMAGE_GENERATION_FAILED'
+    || data.code === 'MODEL_GENERATION_FAILED'
+  ) {
     const parts = [data.error || '已绑定的模型调用失败。'];
     if (data.hint) parts.push(data.hint);
     return { kind: 'endpoint-failed', message: parts.join(' ') };
