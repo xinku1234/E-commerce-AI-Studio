@@ -1,7 +1,7 @@
 import type { ResolvedImagePart } from './imageInput';
 import { getGeminiClient } from './gemini';
 import { buildEcommerceImagePrompt } from './prompts';
-import { validateRequestUrl } from '../security';
+import { safeFetch, validateRequestUrl } from '../security';
 import { isEndpointVerified } from './verifiedEndpoints';
 import { joinOpenAiPath } from './openAiCompatible';
 
@@ -77,7 +77,7 @@ async function generateWithOpenAiCompatible(request: ImageGenerationRequest): Pr
   const model = request.imageModel === 'custom-image-engine' || request.imageModel.startsWith('gemini-')
     ? 'black-forest-labs/FLUX.1-schnell'
     : request.imageModel;
-  const response = await fetch(endpoint, {
+  const response = await safeFetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -98,7 +98,7 @@ async function generateWithOpenAiCompatible(request: ImageGenerationRequest): Pr
       response_format: 'b64_json'
     }),
     signal: AbortSignal.timeout(20000)
-  });
+  }, { label: '自定义图片接口地址' });
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
