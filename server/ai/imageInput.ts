@@ -1,4 +1,4 @@
-import { validateRequestUrl } from '../security';
+import { safeFetch } from '../security';
 
 export interface ResolvedImagePart {
   mimeType: string;
@@ -25,11 +25,10 @@ export async function resolveImagePart(imageInput: string | undefined): Promise<
 
   if (value.startsWith('http://') || value.startsWith('https://')) {
     try {
-      const safeUrl = validateRequestUrl(value, '图片地址');
-      const response = await fetch(safeUrl, {
+      const response = await safeFetch(value, {
         headers: { 'User-Agent': 'e-commerce-ai-studio' },
         signal: AbortSignal.timeout(8000)
-      });
+      }, { label: '图片地址' });
       if (!response.ok) return null;
 
       const contentType = response.headers.get('content-type') || 'image/jpeg';

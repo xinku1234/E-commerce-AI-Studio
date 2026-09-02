@@ -8,7 +8,8 @@ import { generateProductImage } from "./server/ai/imageProviders";
 import { buildFallbackDetailModules } from "./server/ai/detailFallback";
 import { apiNotFound, errorHandler, requestContext } from "./server/http";
 import { simulateChannelPublish } from "./server/publishSimulation";
-import { validateRequestUrl } from "./server/security";
+import { safeFetch, validateRequestUrl } from "./server/security";
+import { rateLimit } from "./server/rateLimit";
 import { hasVerifiedEndpoint, isEndpointVerified, markEndpointVerified } from "./server/ai/verifiedEndpoints";
 import { collectImageDataUrls, extractJsonObject, requestCustomChatJson } from "./server/ai/openAiCompatible";
 import {
@@ -35,9 +36,20 @@ if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
   throw new Error(`PORT 必须是 1 到 65535 之间的整数，当前值为: ${process.env.PORT || ""}`);
 }
 
+app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : false);
 app.use(requestContext);
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+app.use('/api', rateLimit({ windowMs: 60_000, max: 120, name: 'api' }));
+app.use([
+  '/api/test-custom-endpoint',
+  '/api/ai-analyze-product',
+  '/api/generate-multimodal-platform-prompt',
+  '/api/generate-detail-page-modules',
+  '/api/generate-product-image',
+  '/api/generate-hero-suite-5'
+], rateLimit({ windowMs: 60_000, max: 30, name: 'ai' }));
+const requestBodyLimit = process.env.REQUEST_BODY_LIMIT || "20mb";
+app.use(express.json({ limit: requestBodyLimit }));
+app.use(express.urlencoded({ extended: true, limit: requestBodyLimit }));
 
 function requireConfiguredModel(customEndpointUrl?: unknown) {
   const ai = getAiCapabilities();
@@ -97,18 +109,18 @@ app.post("/api/test-custom-endpoint", async (req, res) => {
       headers["Authorization"] = `Bearer ${apiKey.trim()}`;
     }
 
-    let fetchResponse = await fetch(targetModelsUrl, {
+    let fetchResponse = await safeFetch(targetModelsUrl, {
       method: "GET",
       headers,
       signal: AbortSignal.timeout(10000)
-    }).catch(async () => {
+    }, { label: '接口地址' }).catch(async () => {
       // If direct /models fails, try without /v1/models or root
       if (cleanUrl.endsWith("/v1")) {
-        return fetch(`${cleanUrl}/models`, {
+        return safeFetch(`${cleanUrl}/models`, {
           method: "GET",
           headers,
           signal: AbortSignal.timeout(6000)
-        }).catch(() => null);
+        }, { label: '接口地址' }).catch(() => null);
       }
       return null;
     });
@@ -145,11 +157,11 @@ app.post("/api/test-custom-endpoint", async (req, res) => {
     if (modelsList.length === 0) {
       // Test if endpoint responds to a lightweight test
       try {
-        const pingRes = await fetch(cleanUrl, {
+        const pingRes = await safeFetch(cleanUrl, {
           method: "GET",
           headers,
           signal: AbortSignal.timeout(5000)
-        });
+        }, { label: '接口地址' });
         if (pingRes.status === 401 || pingRes.status === 403) {
           authRejected = true;
           authRejectedStatus = pingRes.status;
