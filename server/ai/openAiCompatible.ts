@@ -1,4 +1,4 @@
-import { validateRequestUrl } from '../security';
+import { safeFetch, validateRequestUrl } from '../security';
 
 export type OpenAiPathSuffix = 'chat/completions' | 'images/generations';
 
@@ -125,7 +125,7 @@ export async function requestCustomChatJson(request: CustomChatJsonRequest): Pro
   for (const useJsonMode of [true, false]) {
     let response: any;
     try {
-      response = await fetch(chatUrl, {
+      response = await safeFetch(chatUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -138,7 +138,7 @@ export async function requestCustomChatJson(request: CustomChatJsonRequest): Pro
           ...(useJsonMode ? { response_format: { type: 'json_object' } } : {})
         }),
         signal: AbortSignal.timeout(timeoutMs)
-      });
+      }, { label: request.label || '自定义接口地址' });
     } catch (error: any) {
       const isTimeout = error?.name === 'TimeoutError' || error?.name === 'AbortError';
       throw fail(isTimeout ? `请求在 ${timeoutMs}ms 内未返回` : `网络请求失败：${error?.message || '未知网络错误'}`);
